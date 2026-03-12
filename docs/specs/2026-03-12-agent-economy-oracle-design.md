@@ -208,16 +208,17 @@ raw_economic_events
   → published_feed_values (MV: final feed values with provenance envelope)
 ```
 
-All are ClickHouse incremental materialized views — they update at insert time, not via batch jobs.
+All are ClickHouse incremental materialized views — streaming-first, updating at insert time. Selective recomputation is used for backfills and correction reconciliation (see below).
 
 #### Correction Semantics in MVs
 
-Corrections are the main technical nuance with incremental MVs. The rules:
+Corrections are the main technical nuance with incremental MVs. The strategy is **exclude-then-reconcile**:
 
 1. **Append-only correction events** — corrections insert new rows into `raw_economic_events` with `ingestion_type = 'correction'` and `corrects_event_id` pointing to the original. The original is never mutated.
-2. **Delta adjustments in rollups** — correction events carry both the old value (negative delta) and new value (positive delta). The 1m MV applies the delta, not a full recompute.
-3. **Partition recomputation for backfills** — when a new adapter backfills historical data, affected partitions in the rollup tables are dropped and recomputed from raw events. This is a scheduled operation, not real-time.
-4. **Correction propagation** — 1m → 1h → 1d MVs propagate corrections via the same delta mechanism. The `feed_revision_log` table records every restatement.
+2. **Rollups exclude correction rows** — the 1m MV filters `WHERE corrects_event_id IS NULL`, so rollups only aggregate original events. This keeps MVs simple and deterministic.
+3. **Feed computation is correction-aware** — final feed value computation (downstream of rollups) applies `NOT IN (SELECT corrects_event_id ...)` filtering to exclude superseded originals, then incorporates correction rows. This is where correction semantics are resolved.
+4. **Partition recomputation for backfills** — when a new adapter backfills historical data or corrections accumulate, affected partitions in the rollup tables are dropped and recomputed from raw events. This is a scheduled operation, not real-time.
+5. **Revision tracking** — the `feed_revision_log` table records every restatement for auditability.
 
 ### 4.3 Rollup Table Schemas
 
@@ -342,11 +343,14 @@ Note: This MV includes original events even if they are later corrected. Downstr
 | `feed_versions` | Schema evolution tracking |
 | `feed_inputs` | Which raw events feed each index |
 | `attestation_jobs` | Pending/completed attestation work |
-| `api_keys` | Oracle API access |
-| `subscriptions` | Alerts, webhooks, SSE channels |
-| `billing_accounts` | Free / pro / growth tiers |
-| `mcp_tool_entitlements` | Which tools per tier |
-| `usage_metering` | API call counts per key |
+| `subscriptions` | Oracle-specific alerts, webhooks, SSE channels |
+
+**Auth, billing, and metering reuse gateway infrastructure** (see Section 19):
+- API keys → `gateway_api_keys` (add `oracle` to scopes)
+- Tenant identity → `gateway_tenants`
+- Billing → existing Stripe integration
+- Quota/metering → `gateway_quota_usage` (add `oracle` service)
+- Plan limits → extend `PLAN_LIMITS` with oracle-specific limits
 
 ---
 
@@ -553,7 +557,7 @@ let report = LucidOracle::verify_and_read(
 
 #### Ed25519 Verification
 
-Reports are verified using Solana's native Ed25519 precompile (`Ed25519SigVerify111111111111111111111111111`). The `post_report` instruction includes the Ed25519 verify instruction in the same transaction. Consumers calling `verify_and_read` trust the on-chain report (already verified at post time) and only check freshness + signer authority.
+Reports are verified using Solana's native Ed25519 signature verification program (`Ed25519SigVerify111111111111111111111111111`). The `post_report` transaction includes the Ed25519 verify instruction at the transaction level (not via CPI — Solana's precompiled signature programs are not CPI-callable). The oracle program inspects the `sysvar::instructions` account to confirm the Ed25519 verification instruction was included and succeeded in the same transaction. Consumers calling `verify_and_read` trust the on-chain report (already verified at post time) and only check freshness + signer authority.
 
 ### 8.3 Base — MVR Push Oracle (OCR-inspired)
 
@@ -604,7 +608,7 @@ interface ILucidOracle {
 
 - `postReport`: restricted to authorized updater EOA (Lucid's oracle publisher). Upgradable to multisig via `updateSignerSet`.
 - All read functions: public, no auth required.
-- Ed25519 signature verification uses EVM's `ecrecover` for ECDSA or a verifier precompile for Ed25519 (Base supports `0x05` precompile).
+- On-chain signature verification on Base uses an **authorized updater** model: Lucid's oracle publisher EOA (or multisig) posts pre-verified reports. Ed25519 attestation remains the off-chain canonical proof; on-chain Base verification uses ECDSA (`ecrecover`) for the poster's authority. There is no native Ed25519 precompile in the EVM (0x05 is ModExp, not Ed25519). Future: if RIP-7212/7696 deploys Ed25519 verification on Base, the contract can be upgraded to verify Ed25519 directly.
 - Report data is ABI-encoded for on-chain storage. The same data is Borsh-encoded for the Solana program.
 
 ### 8.4 Report Provenance Envelope
