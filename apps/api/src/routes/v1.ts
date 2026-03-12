@@ -107,7 +107,7 @@ export function registerOracleRoutes(app: FastifyInstance): void {
       return reply.status(404).send({ error: 'Feed not found', feed_id: id })
     }
 
-    return {
+    const base = {
       feed_id: id,
       version: def.version,
       name: def.name,
@@ -116,16 +116,55 @@ export function registerOracleRoutes(app: FastifyInstance): void {
       deviation_threshold_bps: def.deviation_threshold_bps,
       confidence_formula: {
         version: CONFIDENCE_WEIGHTS.version,
-        weights: {
-          source_diversity_score: CONFIDENCE_WEIGHTS.source_diversity_score,
-          identity_confidence: CONFIDENCE_WEIGHTS.identity_confidence,
-          data_completeness: CONFIDENCE_WEIGHTS.data_completeness,
-          anomaly_cleanliness: CONFIDENCE_WEIGHTS.anomaly_cleanliness,
-          freshness_score: CONFIDENCE_WEIGHTS.freshness_score,
-          revision_stability: CONFIDENCE_WEIGHTS.revision_stability,
-        },
-        note: 'All inputs normalized to [0,1] where higher = more confident',
+        weights: { ...CONFIDENCE_WEIGHTS },
       },
+    }
+
+    // Feed-specific computation details
+    if (id === 'aai') {
+      return {
+        ...base,
+        computation: {
+          type: 'activity_index',
+          range: [0, 1000],
+          normalization: 'log10',
+          weights: { active_agents: 0.25, throughput_per_second: 0.25, authentic_tool_call_volume: 0.25, model_provider_diversity: 0.25 },
+          anchors: { active_agents: 100, throughput_per_second: 10, authentic_tool_call_volume: 10000, model_provider_diversity: 50 },
+          formula: 'min(1000, log10(value+1) / log10(anchor+1) * 1000)',
+        },
+        canonical_json_version: 'v1',
+      }
+    }
+
+    if (id === 'apri') {
+      return {
+        ...base,
+        computation: {
+          type: 'risk_index',
+          range_bps: [0, 10000],
+          scaling: 'raw_fraction * 10000',
+          weights: { error_rate: 0.30, provider_concentration: 0.25, authenticity_ratio: 0.25, activity_continuity: 0.20 },
+          dimensions: {
+            error_rate: { scope: 'llm_inference + tool_call' },
+            provider_concentration: { method: 'HHI', scope: 'provider IS NOT NULL' },
+            authenticity_ratio: { scope: 'all events' },
+            activity_continuity: { scope: 'all events', bucket_size_ms: 60000 },
+          },
+        },
+        canonical_json_version: 'v1',
+      }
+    }
+
+    // AEGDP (default)
+    return {
+      ...base,
+      computation: {
+        type: 'economic_gdp',
+        unit: 'USD',
+        components: ['protocol_payments_usd', 'protocol_task_revenue_usd', 'protocol_revenue_distributed_usd'],
+        formula: 'sum(all_protocol_values_across_components)',
+      },
+      canonical_json_version: 'v1',
     }
   })
 

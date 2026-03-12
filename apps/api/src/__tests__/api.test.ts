@@ -103,4 +103,13 @@ describe('Oracle Economy API', () => {
     handleIndexUpdate('not json')
     handleIndexUpdate('{}') // missing feed_id — should not crash
   })
+
+  it('GET /v1/oracle/feeds/aai/methodology returns computation details', async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/oracle/feeds/aai/methodology' })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.computation.type).toBe('activity_index')
+    expect(body.computation.weights.active_agents).toBe(0.25)
+    expect(body.canonical_json_version).toBe('v1')
+  })
 })
