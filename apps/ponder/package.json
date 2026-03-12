@@ -1,0 +1,17 @@
+{
+  "name": "@lucid/oracle-ponder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "ponder dev",
+    "start": "ponder start",
+    "codegen": "ponder codegen"
+  },
+  "dependencies": {
+    "@ponder/core": "^0.7.0",
+    "hono": "^4.0.0",
+    "kafkajs": "^2.2.0",
+    "viem": "^2.0.0"
+  }
+}

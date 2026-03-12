@@ -5,6 +5,7 @@ COPY packages/core/package.json packages/core/
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/
 COPY apps/publisher/package.json apps/publisher/
+COPY apps/ponder/package.json apps/ponder/
 RUN npm install
 COPY . .
 
@@ -22,3 +23,7 @@ CMD ["npx", "tsx", "apps/worker/src/index.ts"]
 # Publisher target
 FROM base AS publisher
 CMD ["npx", "tsx", "apps/publisher/src/index.ts"]
+
+# Ponder target (Base indexer)
+FROM base AS ponder
+CMD ["npx", "ponder", "start"]

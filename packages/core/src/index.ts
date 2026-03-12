@@ -18,6 +18,17 @@ export {
   transformPaymentSession,
 } from './adapters/gateway-tap.js'
 
+// Adapters (ERC-8004)
+export {
+  normalizeAgentRegistered,
+  normalizeAgentUpdated,
+  normalizeOwnershipTransferred,
+  normalizeReputationUpdated,
+} from './adapters/erc8004.js'
+
+// Adapters (Helius)
+export { normalizeHeliusTransaction, verifyHeliusSignature, type HeliusTransaction } from './adapters/helius.js'
+
 // Clients
 export {
   OracleClickHouse,
