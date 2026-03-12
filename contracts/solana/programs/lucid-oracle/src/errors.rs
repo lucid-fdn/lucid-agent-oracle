@@ -12,4 +12,6 @@ pub enum OracleError {
     MessageMismatch,
     #[msg("Signer set exceeds maximum length")]
     SignerSetTooLarge,
+    #[msg("Authority cannot be the zero pubkey")]
+    ZeroAuthority,
 }

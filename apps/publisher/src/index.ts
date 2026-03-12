@@ -19,23 +19,20 @@ export async function handlePublicationRequest(
 ): Promise<void> {
   const alreadyPublished = await checkAlreadyPublished(handlers.clickhouse, req)
 
-  const [solanaResult, baseResult] = await Promise.allSettled([
+  const [solanaTxHash, baseTxHash] = await Promise.all([
     alreadyPublished.skipSolana
-      ? Promise.resolve(null)
+      ? null
       : handlers.postSolana(req).catch((err) => {
           console.error(`[publisher] Solana posting failed for ${req.feed_id}:`, err.message)
           return null
         }),
     alreadyPublished.skipBase
-      ? Promise.resolve(null)
+      ? null
       : handlers.postBase(req).catch((err) => {
           console.error(`[publisher] Base posting failed for ${req.feed_id}:`, err.message)
           return null
         }),
   ])
-
-  const solanaTxHash = solanaResult.status === 'fulfilled' ? solanaResult.value : null
-  const baseTxHash = baseResult.status === 'fulfilled' ? baseResult.value : null
 
   await recordPublicationStatus(handlers.clickhouse, req, solanaTxHash, baseTxHash)
 }

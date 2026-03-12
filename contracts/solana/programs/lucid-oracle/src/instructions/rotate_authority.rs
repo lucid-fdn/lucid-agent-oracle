@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use crate::state::FeedConfig;
+use crate::errors::OracleError;
 
 #[derive(Accounts)]
 pub struct RotateAuthority<'info> {
@@ -15,6 +16,7 @@ pub struct RotateAuthority<'info> {
 }
 
 pub fn handler(ctx: Context<RotateAuthority>, new_authority: Pubkey) -> Result<()> {
+    require!(new_authority != Pubkey::default(), OracleError::ZeroAuthority);
     ctx.accounts.feed_config.authority = new_authority;
     Ok(())
 }

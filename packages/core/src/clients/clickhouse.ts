@@ -270,25 +270,6 @@ export class OracleClickHouse {
     return rows[0] ?? null
   }
 
-  /** Insert a publication-status revision row (pub_status_rev > 0). */
-  async insertStatusRevisionRow(
-    original: PublishedFeedRow,
-    publishedSolana: string | null,
-    publishedBase: string | null,
-  ): Promise<void> {
-    const row: PublishedFeedRow = {
-      ...original,
-      pub_status_rev: original.pub_status_rev + 1,
-      published_solana: publishedSolana,
-      published_base: publishedBase,
-    }
-    await this.client.insert({
-      table: 'published_feed_values',
-      values: [row],
-      format: 'JSONEachRow',
-    })
-  }
-
   async close(): Promise<void> {
     await this.client.close()
   }
