@@ -10,7 +10,7 @@
 - **Base: per-feed `postReport`** — The global spec describes an MVR (multi-value report) bundled pattern. Plan 2B deliberately uses per-feed `postReport(feedId, ...)` instead. This avoids coordinating 3 feed computations into a single transaction when they may complete at different times. The MVR bundle can be added as a convenience method in v2 without breaking the per-feed interface. **This is a documented deviation, not an oversight.**
 - **Solana: no CPI helper** — The global spec includes `verify_and_read`. Plan 2B defers this to Plan 3. Consumers read PDA accounts directly using standard Anchor deserialization. Adding CPI later is additive.
 - **Solana: latest-only** — `FeedReport` PDA uses `[b"report", feed_id]` (no timestamp key). Only the latest report is stored per feed. Historical reports live in ClickHouse. This keeps rent costs flat regardless of publication frequency.
-- **ClickHouse publication status**: Uses **revision-row replacement** (insert new row with higher `revision`) instead of `ALTER TABLE UPDATE`. This preserves ReplacingMergeTree semantics and avoids ClickHouse mutations.
+- **ClickHouse publication status**: Uses a separate `pub_status_rev` column for publication-status tracking (insert new row with higher `pub_status_rev`) instead of `ALTER TABLE UPDATE`. The existing `revision` column is reserved for computation restatements only. This preserves ReplacingMergeTree semantics and avoids ClickHouse mutations while keeping the two concerns cleanly separated.
 - **Worker → publisher message**: Worker publishes a typed `PublicationRequest` to `publication.requests` topic, not a raw `PublishedFeedRow`. This decouples the publisher service from storage schema.
 
 ---
@@ -120,7 +120,7 @@ pub fn initialize_feed(
 ) -> Result<()>
 ```
 
-**2. `post_report`** — Write latest report values. Authority-only. Ed25519 signature verified via `Ed25519SigVerify` precompile instruction included in the same transaction. The program inspects `sysvar::instructions` to confirm the Ed25519 verification instruction was present and succeeded.
+**2. `post_report`** — Write latest report values. Authority-only. Ed25519 signature verified via `Ed25519SigVerify` precompile instruction included in the same transaction. The program inspects `sysvar::instructions` to confirm the Ed25519 verification instruction was present, succeeded, **and matches the expected signer and message**.
 
 ```rust
 pub fn post_report(
@@ -137,8 +137,11 @@ pub fn post_report(
 
 Validation:
 - Authority matches FeedConfig.authority
-- `report_timestamp > current_report.report_timestamp` (monotonic)
-- Ed25519 verify instruction present in transaction (sysvar::instructions check)
+- Lexicographic freshness: `(report_timestamp, revision) > (current.report_timestamp, current.revision)` — newer timestamp wins; same timestamp with higher revision wins (supports restatements)
+- Ed25519 verify instruction present in transaction (sysvar::instructions check) **with bound verification**:
+  - The public key in the Ed25519SigVerify instruction must be in `FeedConfig.signer_set`
+  - The message bytes in the Ed25519SigVerify instruction must match the canonical serialization of the report data being posted (the program reconstructs the expected message from the instruction arguments and compares)
+  - This prevents replay of unrelated Ed25519 verifications — "some valid signature in this tx" is not enough; it must be **the right signer signing the right report**
 
 **3. `rotate_authority`** — Transfer authority to a new pubkey (e.g., for multisig upgrade). Current authority signs.
 
@@ -153,9 +156,14 @@ pub fn rotate_authority(
 
 The publisher constructs a transaction with two instructions:
 1. `Ed25519SigVerify` precompile instruction (verifies Ed25519 signature against report data)
-2. `post_report` instruction (writes values, checks sysvar::instructions for #1)
+2. `post_report` instruction (writes values, inspects sysvar::instructions for #1)
 
-This is the standard Solana pattern — Ed25519 precompile is not CPI-callable. The program only needs to verify the precompile instruction was included, not re-verify the signature.
+This is the standard Solana pattern — Ed25519 precompile is not CPI-callable. However, presence alone is not sufficient. The program must **bind** the verification to the current report by:
+1. Reading the Ed25519SigVerify instruction data from `sysvar::instructions`
+2. Extracting the public key and verifying it is in `FeedConfig.signer_set`
+3. Extracting the message bytes and verifying they match the canonical serialization of the report arguments (`feed_id || report_timestamp || value || decimals || confidence || revision || input_manifest_hash || computation_hash`)
+
+Without this binding, an attacker could include any previously valid Ed25519 verification instruction in the transaction and post arbitrary report data. The message format is a fixed-layout concatenation (not JSON) for deterministic on-chain reconstruction.
 
 ### What's NOT in Plan 2B
 - No `verify_and_read` CPI helper (consumers read PDAs directly via Anchor deserialization)
@@ -213,7 +221,13 @@ contract LucidOracle {
         bytes32 inputManifestHash,
         bytes32 computationHash
     ) external onlyAuthority {
-        require(reportTimestamp > latestReports[feedId].reportTimestamp, "stale report");
+        Report storage current = latestReports[feedId];
+        // Lexicographic freshness: newer timestamp wins, or same timestamp with higher revision (restatement)
+        require(
+            reportTimestamp > current.reportTimestamp ||
+            (reportTimestamp == current.reportTimestamp && revision > current.revision),
+            "stale report"
+        );
         latestReports[feedId] = Report(
             reportTimestamp, value, decimals, confidence, revision,
             inputManifestHash, computationHash
@@ -368,17 +382,22 @@ Uses `viem` (or `ethers` v6). Authority EOA signs the transaction.
 When a `PublicationRequest` is consumed:
 
 1. Post to Solana and Base **in parallel** (`Promise.allSettled`)
-2. After both settle, insert **one revision-row** into ClickHouse `published_feed_values`:
-   - Same `(feed_id, feed_version, computed_at)` as the original row (written by worker with `revision = 0`)
-   - `revision = 1`
+2. After both settle, insert **one status-revision row** into ClickHouse `published_feed_values`:
+   - Same `(feed_id, feed_version, computed_at)` as the original row
+   - Same `revision` as the original row (computation revision is unchanged)
+   - `pub_status_rev = 1` (the original row written by the worker has `pub_status_rev = 0`)
    - `published_solana` = Solana tx signature (or `null` if failed)
    - `published_base` = Base tx hash (or `null` if failed)
    - All other fields copied from the original row
-   - ReplacingMergeTree will keep `revision = 1` over `revision = 0` after merge
+   - ReplacingMergeTree version column is changed from `revision` to `pub_status_rev` — see migration below
 
-One row per publication attempt, not one per chain. If both chains fail, no revision-row is inserted (original `revision = 0` row remains with both fields `null`). If one chain fails, the revision-row records the successful tx hash and `null` for the failed chain; the next publication cycle posts a fresh value that supersedes it.
+One row per publication attempt, not one per chain. If both chains fail, no status-revision row is inserted (original row remains with both fields `null`). If one chain fails, the status-revision row records the successful tx hash and `null` for the failed chain; the next publication cycle posts a fresh value that supersedes it.
 
-This avoids `ALTER TABLE UPDATE` mutations entirely. The publisher only ever **inserts** — ClickHouse's ReplacingMergeTree handles dedup by keeping the row with the highest `revision` for each `(feed_id, feed_version, computed_at)` key.
+**Separation of concerns:** `revision` tracks computation restatements (same timestamp, corrected value). `pub_status_rev` tracks publication metadata updates (same value, new tx hashes). These are orthogonal — a restatement (`revision = 1`) might not yet be published (`pub_status_rev = 0`), and a published value (`pub_status_rev = 1`) might later be restated (`revision = 1, pub_status_rev = 0` for the new computation).
+
+**ClickHouse migration required:** The existing `ReplacingMergeTree(revision)` engine needs to change to `ReplacingMergeTree(pub_status_rev)` with a new `pub_status_rev UInt16 DEFAULT 0` column. Since ClickHouse does not support `ALTER TABLE ... MODIFY ENGINE`, this requires a drop-and-recreate of `published_feed_values` (acceptable in Plan 2B since no production data exists yet).
+
+This avoids `ALTER TABLE UPDATE` mutations entirely. The publisher only ever **inserts** — ClickHouse's ReplacingMergeTree handles dedup by keeping the row with the highest `pub_status_rev` for each `(feed_id, feed_version, computed_at)` key.
 
 **Partial success handling:** If Solana succeeds but Base fails (or vice versa), a revision-row is inserted with the successful chain's tx hash and `null` for the failed chain. The failed chain is retried on the next attempt.
 
@@ -396,7 +415,7 @@ If all 3 attempts fail for a chain, log the error and move on. The message is co
 
 ### Idempotency
 
-`PublicationRequest` identity is `(feed_id, feed_version, computed_at, revision)`. Before posting, the publisher checks if a revision-row with `published_solana IS NOT NULL` (or `published_base IS NOT NULL`) already exists for this identity. If so, skip that chain. This prevents double-posting on consumer restarts.
+`PublicationRequest` identity is `(feed_id, feed_version, computed_at, revision)`. Before posting, the publisher queries ClickHouse for the latest `pub_status_rev` row matching this identity. If `published_solana IS NOT NULL` (or `published_base IS NOT NULL`), skip that chain. This prevents double-posting on consumer restarts.
 
 ---
 
@@ -416,7 +435,7 @@ const publicationRequest: PublicationRequest = {
   value_json: result.valueJson,
   value_usd: result.valueUsd,
   value_index: result.valueIndex,
-  confidence: result.completeness,
+  confidence: result.completeness, // TODO(Plan 3): use computeConfidence() — currently mirrors completeness as a Plan 2A placeholder
   completeness: result.completeness,
   input_manifest_hash: result.inputManifestHash,
   computation_hash: result.computationHash,
@@ -442,17 +461,22 @@ await producer.publishJson(TOPICS.PUBLICATION, result.feedId, publicationRequest
 
 Anchor test framework (`anchor test`) with local validator:
 - `initialize_feed` creates correct PDAs with expected values
-- `post_report` updates FeedReport, validates monotonic timestamp
-- `post_report` rejects stale timestamp
+- `post_report` updates FeedReport with correct values
+- `post_report` accepts newer timestamp (normal flow)
+- `post_report` accepts same timestamp with higher revision (restatement)
+- `post_report` rejects stale timestamp + same/lower revision
 - `post_report` rejects wrong authority
+- `post_report` rejects Ed25519 instruction with wrong signer (not in signer_set)
+- `post_report` rejects Ed25519 instruction with wrong message (mismatched report data)
 - `rotate_authority` transfers authority, old authority rejected after rotation
-- Ed25519 verify instruction presence checked (sysvar::instructions)
 
 ### Base Contract Tests
 
 Foundry test framework (`forge test`):
 - `postReport` stores report, emits `ReportPosted` event
-- `postReport` rejects stale timestamp
+- `postReport` accepts newer timestamp (normal flow)
+- `postReport` accepts same timestamp with higher revision (restatement)
+- `postReport` rejects stale timestamp + same/lower revision
 - `postReport` rejects non-authority
 - `getLatestReport` returns correct values
 - `rotateAuthority` transfers authority, emits event
@@ -466,7 +490,7 @@ Vitest unit tests + integration tests:
 - Base posting logic (mocked RPC)
 - Parallel posting with `Promise.allSettled`
 - Retry logic (3x exponential backoff)
-- Revision-row insertion into ClickHouse
+- Status-revision row insertion into ClickHouse (pub_status_rev = 1)
 - Partial success handling (one chain fails)
 - Idempotency check (skip already-published)
 - Graceful shutdown
@@ -552,7 +576,7 @@ apps/publisher/
     ├── config.ts                       # PublisherConfig from env
     ├── solana.ts                       # postToSolana()
     ├── base.ts                         # postToBase()
-    ├── status.ts                       # Revision-row ClickHouse insertion
+    ├── status.ts                       # pub_status_rev row insertion into ClickHouse
     └── __tests__/
         ├── solana.test.ts
         ├── base.test.ts
@@ -567,6 +591,7 @@ packages/core/src/types/publication.ts  # NEW: PublicationRequest type
 packages/core/src/index.ts              # Export PublicationRequest
 apps/worker/src/publisher.ts            # Add TOPICS.PUBLICATION publish
 Dockerfile                              # Add publisher target
+migrations/clickhouse/004_add_pub_status_rev.sql  # NEW: drop+recreate published_feed_values with pub_status_rev column, ReplacingMergeTree(pub_status_rev)
 ```
 
 ---
