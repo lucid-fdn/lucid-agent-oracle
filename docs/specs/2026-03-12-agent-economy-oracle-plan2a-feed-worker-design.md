@@ -39,7 +39,7 @@ On each tick:
 
 4. **Advance checkpoint** — Update `oracle_worker_checkpoints` in Postgres after successful ClickHouse insert. Worker delivery is at-least-once: crashes before checkpoint advancement can cause re-delivery. This is safe because `raw_economic_events` uses deterministic `event_id` for query-time dedup when needed.
 
-5. **Compute** — Query ClickHouse rollups for the current computation window (`now - COMPUTATION_WINDOW_MS` to `now`) using `-Merge` aggregate functions. Run all 3 feed functions (`computeAEGDP`, `computeAAI`, `computeAPRI`). Each returns a typed result with provenance hashes. **Note:** APRI's `provider_concentration` (HHI) requires per-provider event counts, which the rollup's `uniq` aggregate does not provide. The worker queries `raw_economic_events` directly for HHI computation, while using rollups for all other metrics. This is an acceptable trade-off for Plan 2A; a dedicated per-provider count rollup can be added in v2 if query cost becomes an issue.
+5. **Compute** — Query ClickHouse rollups for the current computation window (`now - COMPUTATION_WINDOW_MS` to `now`) using `-Merge` aggregate functions. Run all 3 feed functions (`computeAEGDP`, `computeAAI`, `computeAPRI`). Each returns a typed result with provenance hashes. AAI's `active_agents` uses `distinct_subjects_authentic` and `model_provider_diversity` uses `distinct_model_provider_pairs_authentic` (both authenticity-filtered rollup columns). **Note:** APRI's `provider_concentration` (HHI) requires per-provider event counts, which the rollup's `uniq` aggregate does not provide. The worker queries `raw_economic_events` directly for HHI computation, while using rollups for all other metrics. This is an acceptable trade-off for Plan 2A; a dedicated per-provider count rollup can be added in v2 if query cost becomes an issue.
 
 6. **Threshold check** — Compare new value against latest published value from ClickHouse `published_feed_values` for the same `feed_id` and `feed_version`, filtered by `WHERE revision_status != 'superseded'`, ordered by `computed_at DESC LIMIT 1`. The correct SQL filter is always `revision_status != 'superseded'` — do NOT substitute `revision = 0` even though they produce the same result in Plan 2A (where all rows are `preliminary` with `revision = 0`). The `superseded` status is reserved for future plans when re-attestation with corrected data replaces an earlier value. Publish only if:
    - **Heartbeat:** No publication for this feed in the last `HEARTBEAT_INTERVAL_MS` (default 15 minutes). This is intentionally longer than `POLL_INTERVAL_MS` (5 minutes): the worker computes every cycle but only publishes on heartbeat if the value hasn't deviated. Proves liveness without flooding downstream consumers.
@@ -103,7 +103,7 @@ Weights versioned in `APRI_WEIGHTS` constant.
 
 **Scaling:** Each dimension formula produces a raw fraction in [0, 1]. The implementation scales each to [0, 10000] by multiplying by 10000 before applying weights: `dimension_bps = raw_fraction × 10000`. Final APRI = weighted sum of scaled dimensions, producing [0, 10000] basis points.
 
-**Zero-event guard:** All APRI dimensions that involve division (`error_rate`, `authenticity_ratio`, `activity_continuity`) default to `0` (raw fraction) when their denominator is zero. This means an empty window produces APRI = 0 bps (no risk signal), which is appropriate — no data means no observable risk, not maximum risk. The feed still publishes on heartbeat with `completeness: 0` to signal the empty-window condition.
+**Zero-event guard:** APRI dimensions with data-derived denominators (`error_rate`, `authenticity_ratio`, `provider_concentration`) default to `0` (raw fraction) when their denominator is zero. `error_rate` and `authenticity_ratio` divide by total event count; `provider_concentration` (HHI) divides by total provider-attributed events (scope: `llm_inference + tool_call where provider IS NOT NULL`). All three are zero when no qualifying events exist. `activity_continuity` has a fixed denominator (`COMPUTATION_WINDOW_MS / 60000`) that is never zero, but evaluates to `1.0` (maximum gap risk) when `active_buckets = 0`. An empty window thus produces APRI = `0.20 × 10000 = 2000 bps` from `activity_continuity` alone, signaling that the feed is alive but has no incoming data. The feed still publishes on heartbeat with `completeness: 0` to reinforce the empty-window condition.
 
 Both functions return `input_manifest_hash` + `computation_hash` for provenance, following the same pattern as `computeAEGDP`.
 
@@ -171,8 +171,10 @@ CREATE TABLE metric_rollups_1m (
   success_count       SimpleAggregateFunction(sum, UInt64),
   error_count         SimpleAggregateFunction(sum, UInt64),
   distinct_subjects   AggregateFunction(uniq, String),
+  distinct_subjects_authentic AggregateFunction(uniq, String),
   distinct_providers  AggregateFunction(uniq, String),
-  distinct_model_provider_pairs AggregateFunction(uniq, Tuple(String, String))
+  distinct_model_provider_pairs AggregateFunction(uniq, Tuple(String, String)),
+  distinct_model_provider_pairs_authentic AggregateFunction(uniq, Tuple(String, String))
 ) ENGINE = AggregatingMergeTree()
 PARTITION BY toYYYYMM(bucket)
 ORDER BY (bucket, source, protocol, chain, event_type);
@@ -191,9 +193,12 @@ SELECT
   toUInt64(countIf(status = 'success')) AS success_count,
   toUInt64(countIf(status = 'error')) AS error_count,
   uniqState(coalesce(subject_entity_id, subject_raw_id, '')) AS distinct_subjects,
+  uniqStateIf(coalesce(subject_entity_id, subject_raw_id, ''), economic_authentic = 1) AS distinct_subjects_authentic,
   uniqStateIf(assumeNotNull(provider), provider IS NOT NULL) AS distinct_providers,
   uniqStateIf(tuple(assumeNotNull(model_id), assumeNotNull(provider)), model_id IS NOT NULL AND provider IS NOT NULL)
-    AS distinct_model_provider_pairs
+    AS distinct_model_provider_pairs,
+  uniqStateIf(tuple(assumeNotNull(model_id), assumeNotNull(provider)), model_id IS NOT NULL AND provider IS NOT NULL AND economic_authentic = 1)
+    AS distinct_model_provider_pairs_authentic
 FROM raw_economic_events
 WHERE corrects_event_id IS NULL
 GROUP BY bucket, source, protocol, chain, event_type;
@@ -205,7 +210,8 @@ Queries use `-Merge` functions:
 SELECT
   bucket,
   sum(event_count) AS total_events,
-  uniqMerge(distinct_subjects) AS unique_agents,
+  uniqMerge(distinct_subjects_authentic) AS unique_agents_authentic,
+  uniqMerge(distinct_model_provider_pairs_authentic) AS unique_model_provider_pairs_authentic,
   uniqMerge(distinct_providers) AS unique_providers
 FROM metric_rollups_1m
 WHERE bucket >= {from:DateTime} AND bucket < {to:DateTime}
@@ -283,6 +289,7 @@ The API server (`apps/api/`) upgrades from Plan 1's direct-push model to a worke
 3. Backfill: for each feed_id in V1_FEEDS, query published_feed_values:
      SELECT * FROM published_feed_values FINAL
      WHERE feed_id = {id} AND feed_version = {V1_FEEDS[id].version}
+       AND revision_status != 'superseded'
      ORDER BY computed_at DESC LIMIT 1
    Populate latestFeedValues Map with the result.
 4. Start consumer message processing → updates in-memory Map
