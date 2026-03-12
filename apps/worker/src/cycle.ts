@@ -90,6 +90,7 @@ export async function runCycle(
       inputManifestHash: aegdpResult.input_manifest_hash,
       computationHash: aegdpResult.computation_hash,
       completeness,
+      freshnessMs: 0,
     },
     {
       feedId: 'aai',
@@ -99,6 +100,7 @@ export async function runCycle(
       inputManifestHash: aaiResult.input_manifest_hash,
       computationHash: aaiResult.computation_hash,
       completeness,
+      freshnessMs: 0,
     },
     {
       feedId: 'apri',
@@ -108,6 +110,7 @@ export async function runCycle(
       inputManifestHash: apriResult.input_manifest_hash,
       computationHash: apriResult.computation_hash,
       completeness,
+      freshnessMs: 0,
     },
   ]
 

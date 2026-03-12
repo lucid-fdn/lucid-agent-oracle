@@ -4,10 +4,14 @@ import {
   type ReportEnvelope,
   type PublishedFeedRow,
   type OracleClickHouse,
+  type PublicationRequest,
   RedpandaProducer,
   TOPICS,
   V1_FEEDS,
   type FeedId,
+  computeConfidence,
+  computeFreshnessScore,
+  computeStalenessRisk,
 } from '@lucid/oracle-core'
 import type { WorkerConfig } from './config.js'
 
@@ -23,13 +27,8 @@ export interface PublishContext {
 
 /** Determine if a feed value should be published. */
 export function shouldPublish(ctx: PublishContext): boolean {
-  // Always publish first value
   if (ctx.previousValue === null || ctx.lastPublishedAt === null) return true
-
-  // Heartbeat: publish if enough time elapsed
   if (ctx.now - ctx.lastPublishedAt >= ctx.heartbeatIntervalMs) return true
-
-  // Deviation: |new - old| / max(old, 1) * 10000 > threshold
   const deviation = Math.abs(ctx.newValue - ctx.previousValue) / Math.max(ctx.previousValue, 1) * 10000
   return deviation > ctx.thresholdBps
 }
@@ -42,9 +41,10 @@ export interface FeedComputeResult {
   inputManifestHash: string
   computationHash: string
   completeness: number
+  freshnessMs: number
 }
 
-/** Attest, persist to ClickHouse, and fanout to Redpanda. */
+/** Attest, persist to ClickHouse, publish to INDEX_UPDATES + PUBLICATION. */
 export async function publishFeedValue(
   result: FeedComputeResult,
   attestation: AttestationService,
@@ -54,6 +54,16 @@ export async function publishFeedValue(
 ): Promise<void> {
   const now = new Date()
   const def = V1_FEEDS[result.feedId]
+
+  // Compute real confidence using the versioned formula
+  const confidence = computeConfidence({
+    source_diversity_score: result.completeness,
+    identity_confidence: 1.0,
+    data_completeness: result.completeness,
+    anomaly_cleanliness: 1.0,
+    freshness_score: computeFreshnessScore(result.freshnessMs, def.update_interval_ms),
+    revision_stability: 1.0,
+  })
 
   const payload: ReportPayload = {
     feed_id: result.feedId,
@@ -76,10 +86,10 @@ export async function publishFeedValue(
     value_json: result.valueJson,
     value_usd: result.valueUsd,
     value_index: result.valueIndex,
-    confidence: result.completeness,
+    confidence,
     completeness: result.completeness,
-    freshness_ms: 0,
-    staleness_risk: 'low',
+    freshness_ms: result.freshnessMs,
+    staleness_risk: computeStalenessRisk(result.freshnessMs, def.update_interval_ms),
     revision_status: 'preliminary',
     methodology_version: def.version,
     input_manifest_hash: result.inputManifestHash,
@@ -94,6 +104,26 @@ export async function publishFeedValue(
   // Persist to ClickHouse (source of truth)
   await clickhouse.insertPublishedFeedValue(row)
 
-  // Fanout to Redpanda
+  // Fanout to API cache
   await producer.publishJson(TOPICS.INDEX_UPDATES, result.feedId, row)
+
+  // Fanout to publisher service for on-chain posting
+  const publicationRequest: PublicationRequest = {
+    feed_id: result.feedId,
+    feed_version: def.version,
+    computed_at: now.toISOString(),
+    revision: 0,
+    value_json: result.valueJson,
+    value_usd: result.valueUsd,
+    value_index: result.valueIndex,
+    confidence,
+    completeness: result.completeness,
+    input_manifest_hash: result.inputManifestHash,
+    computation_hash: result.computationHash,
+    methodology_version: def.version,
+    signer_set_id: envelope.signer_set_id,
+    signatures_json: JSON.stringify(envelope.signatures),
+  }
+
+  await producer.publishJson(TOPICS.PUBLICATION, result.feedId, publicationRequest)
 }
