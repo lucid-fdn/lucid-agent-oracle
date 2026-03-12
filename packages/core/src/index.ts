@@ -8,6 +8,7 @@ export { AttestationService, type ReportPayload, type ReportEnvelope } from './s
 // Feeds
 export { computeAEGDP, type AEGDPInputs, type AEGDPResult } from './feeds/aegdp.js'
 export { computeAAI, AAI_WEIGHTS, AAI_NORMALIZATION, type AAIInputs, type AAIResult } from './feeds/aai.js'
+export { computeAPRI, APRI_WEIGHTS, type APRIInputs, type APRIResult } from './feeds/apri.js'
 
 // Adapters
 export {
