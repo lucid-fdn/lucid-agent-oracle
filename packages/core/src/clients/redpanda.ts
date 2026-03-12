@@ -108,6 +108,19 @@ export class RedpandaConsumer {
     })
   }
 
+  /** Run consumer with raw string messages (for INDEX_UPDATES — not RawEconomicEvent). */
+  async runRaw(handler: (key: string | null, value: string | null) => Promise<void>): Promise<void> {
+    if (!this.consumer) throw new Error('Consumer not initialized')
+    await this.consumer.run({
+      eachMessage: async ({ message }) => {
+        await handler(
+          message.key?.toString() ?? null,
+          message.value?.toString() ?? null,
+        )
+      },
+    })
+  }
+
   /** Disconnect the consumer */
   async disconnect(): Promise<void> {
     await this.consumer?.disconnect()
