@@ -31,7 +31,7 @@ Single long-running TypeScript process with a non-overlapping poll loop (setTime
 
 On each tick:
 
-1. **Poll** — Query gateway Postgres tables using durable compound watermarks `(last_seen_ts, last_seen_id)` per table. Fetch rows with lexicographic `(created_at, id) > (checkpoint_ts, checkpoint_id)`. For mutable tables (`gateway_payment_sessions`), use `updated_at` as the watermark column instead of `created_at`. When a payment session is re-fetched due to an `updated_at` change, the worker produces a **new event with a new `event_id`** (deterministic from the current row state). The previous event for the same session remains in ClickHouse as historical record. This is consistent with the append-only correction model — future plans can link these via `corrects_event_id` when settlement data is available.
+1. **Poll** — Query gateway Postgres tables using durable compound watermarks `(last_seen_ts, last_seen_id)` per table. Read the `watermark_column` from `oracle_worker_checkpoints` for each table (defaults to `created_at`; `gateway_payment_sessions` uses `updated_at`). Fetch rows with lexicographic `(watermark_column, id) > (checkpoint_ts, checkpoint_id)`. When a payment session is re-fetched due to an `updated_at` change, the worker produces a **new event with a new `event_id`** (deterministic from the current row state). The previous event for the same session remains in ClickHouse as historical record. This is consistent with the append-only correction model — future plans can link these via `corrects_event_id` when settlement data is available.
 
 2. **Transform** — Run through existing `transformReceiptEvent`, `transformAuditLogEntry`, `transformPaymentSession` from `@lucid/oracle-core`.
 
@@ -43,7 +43,7 @@ On each tick:
 
 6. **Threshold check** — Compare new value against latest published value from ClickHouse `published_feed_values` for the same `feed_id` and `feed_version`, filtered by `WHERE revision_status != 'superseded'`, ordered by `computed_at DESC LIMIT 1`. The correct SQL filter is always `revision_status != 'superseded'` — do NOT substitute `revision = 0` even though they produce the same result in Plan 2A (where all rows are `preliminary` with `revision = 0`). The `superseded` status is reserved for future plans when re-attestation with corrected data replaces an earlier value. Publish only if:
    - **Heartbeat:** No publication for this feed in the last `HEARTBEAT_INTERVAL_MS` (default 15 minutes). This is intentionally longer than `POLL_INTERVAL_MS` (5 minutes): the worker computes every cycle but only publishes on heartbeat if the value hasn't deviated. Proves liveness without flooding downstream consumers.
-   - **Deviation:** Value changed by more than threshold (AEGDP: 100bps, AAI: 200bps, APRI: 500bps)
+   - **Deviation:** Value changed by more than threshold. Formula: `|new - old| / max(old, 1) × 10000 > threshold_bps`. The `max(old, 1)` floor prevents division-by-zero when the previous value is 0 (e.g., first non-empty window). Thresholds: AEGDP: 100bps, AAI: 200bps, APRI: 500bps.
 
 7. **Attest** — Sign changed feed values via `AttestationService.signReport()` (Plan 1 artifact in `@lucid/oracle-core`). Produces a `ReportEnvelope` with multi-signer-ready structure.
 
@@ -97,11 +97,13 @@ Risk score [0, 10000] basis points. **Higher = more risk.** Four weighted dimens
 | `error_rate` | 0.30 | Fraction with `status = 'error'` | `llm_inference` + `tool_call` only |
 | `provider_concentration` | 0.25 | HHI across `provider` values (event-count in v1, value-weighted in v2) | `llm_inference` + `tool_call` where `provider IS NOT NULL` |
 | `authenticity_ratio` | 0.25 | `1 - (authentic events / total events)` — low authenticity = risk. If `total events = 0`, defaults to `0` (no risk signal). | All events |
-| `activity_continuity` | 0.20 | `1 - (active 1-min buckets / total buckets)` — gaps = risk. `total buckets` = `COMPUTATION_WINDOW_MS / 60000` (e.g., 60 for a 1-hour window), a fixed denominator. `active buckets` = count of distinct `bucket` values in `metric_rollups_1m` with `event_count > 0` in the window. | All events |
+| `activity_continuity` | 0.20 | `1 - (active 1-min buckets / total buckets)` — gaps = risk. `total buckets` = `COMPUTATION_WINDOW_MS / 60000` (e.g., 60 for a 1-hour window), a fixed denominator. `active buckets` = count of distinct `bucket` values in `metric_rollups_1m` where `sum(event_count) > 0` after `GROUP BY bucket` (safe against unmerged parts). | All events |
 
-Weights versioned in `APRI_WEIGHTS` constant. Each dimension outputs [0, 10000]. Final APRI = weighted sum.
+Weights versioned in `APRI_WEIGHTS` constant.
 
-**Zero-event guard:** All APRI dimensions that involve division (`error_rate`, `authenticity_ratio`, `activity_continuity`) default to `0` when their denominator is zero. This means an empty window produces APRI = 0 (no risk signal), which is appropriate — no data means no observable risk, not maximum risk. The feed still publishes on heartbeat with `completeness: 0` to signal the empty-window condition.
+**Scaling:** Each dimension formula produces a raw fraction in [0, 1]. The implementation scales each to [0, 10000] by multiplying by 10000 before applying weights: `dimension_bps = raw_fraction × 10000`. Final APRI = weighted sum of scaled dimensions, producing [0, 10000] basis points.
+
+**Zero-event guard:** All APRI dimensions that involve division (`error_rate`, `authenticity_ratio`, `activity_continuity`) default to `0` (raw fraction) when their denominator is zero. This means an empty window produces APRI = 0 bps (no risk signal), which is appropriate — no data means no observable risk, not maximum risk. The feed still publishes on heartbeat with `completeness: 0` to signal the empty-window condition.
 
 Both functions return `input_manifest_hash` + `computation_hash` for provenance, following the same pattern as `computeAEGDP`.
 
@@ -189,8 +191,8 @@ SELECT
   toUInt64(countIf(status = 'success')) AS success_count,
   toUInt64(countIf(status = 'error')) AS error_count,
   uniqState(coalesce(subject_entity_id, subject_raw_id, '')) AS distinct_subjects,
-  uniqState(coalesce(provider, '')) AS distinct_providers,
-  uniqStateIf(tuple(model_id, provider), model_id IS NOT NULL AND provider IS NOT NULL)
+  uniqStateIf(assumeNotNull(provider), provider IS NOT NULL) AS distinct_providers,
+  uniqStateIf(tuple(assumeNotNull(model_id), assumeNotNull(provider)), model_id IS NOT NULL AND provider IS NOT NULL)
     AS distinct_model_provider_pairs
 FROM raw_economic_events
 WHERE corrects_event_id IS NULL
@@ -284,9 +286,13 @@ The API server (`apps/api/`) upgrades from Plan 1's direct-push model to a worke
      ORDER BY computed_at DESC LIMIT 1
    Populate latestFeedValues Map with the result.
 4. Start consumer message processing → updates in-memory Map
-5. Reconciliation: re-query ClickHouse for any feed_id where the
-   published_feed_values row is newer than what's in the Map
-   (closes the race window between steps 3 and 4)
+5. Reconciliation: for each feed_id, re-query ClickHouse with FINAL:
+     SELECT * FROM published_feed_values FINAL
+     WHERE feed_id = {id} AND feed_version = {V1_FEEDS[id].version}
+       AND revision_status != 'superseded'
+     ORDER BY computed_at DESC LIMIT 1
+   If the ClickHouse row's computed_at > the Map entry's computed_at,
+   update the Map. (Closes the race window between steps 3 and 4.)
 6. Start Fastify listening on :4040
 ```
 
@@ -375,6 +381,7 @@ WORKER_LOCK_ID=1                 # Advisory lock ID
 
 # ClickHouse Cloud (same as Plan 1, now actually used)
 CLICKHOUSE_URL=https://your-instance.clickhouse.cloud:8443
+CLICKHOUSE_USER=default              # ClickHouse Cloud username
 CLICKHOUSE_PASSWORD=...
 
 # Redpanda (same as Plan 1, now actually used)
@@ -399,7 +406,7 @@ ORACLE_ATTESTATION_KEY=<hex-encoded-ed25519-private-key>
 | `migrations/clickhouse/` | DDL for raw_economic_events, metric_rollups_1m + MV, published_feed_values |
 | `migrations/002_worker_checkpoints.sql` | Postgres checkpoint table |
 | `migrations/003_update_feed_methodology.sql` | Updated AAI/APRI methodology seed data |
-| `apps/api/` (modified) | ClickHouse backfill, Redpanda consumer, remove direct push |
+| `apps/api/` (modified) | ClickHouse backfill, Redpanda consumer, remove direct push, methodology endpoint extended with feed-specific details |
 | `packages/core/src/clients/clickhouse.ts` | Refactored `queryFeedRollup` → dimension-filtered rollup queries |
 | `packages/core/src/utils/canonical-json.ts` | Frozen v1 + golden test |
 | `packages/core/src/types/feeds.ts` | Updated V1_FEEDS descriptions |
