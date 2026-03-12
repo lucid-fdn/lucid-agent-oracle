@@ -72,6 +72,7 @@ export async function publishFeedValue(
     feed_version: def.version,
     computed_at: now.toISOString(),
     revision: 0,
+    pub_status_rev: 0,
     value_json: result.valueJson,
     value_usd: result.valueUsd,
     value_index: result.valueIndex,

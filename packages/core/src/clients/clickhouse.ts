@@ -43,6 +43,7 @@ export interface PublishedFeedRow {
   feed_version: number
   computed_at: string
   revision: number
+  pub_status_rev: number
   value_json: string
   value_usd: number | null
   value_index: number | null
@@ -236,6 +237,51 @@ export class OracleClickHouse {
 
   /** Insert a published feed value. */
   async insertPublishedFeedValue(row: PublishedFeedRow): Promise<void> {
+    await this.client.insert({
+      table: 'published_feed_values',
+      values: [row],
+      format: 'JSONEachRow',
+    })
+  }
+
+  /** Check publication status for a specific feed value (idempotency check).
+   *  Returns pub_status_rev so callers can increment it for the next status row. */
+  async queryPublicationStatus(
+    feedId: string,
+    feedVersion: number,
+    computedAt: string,
+    revision: number,
+  ): Promise<{ published_solana: string | null; published_base: string | null; pub_status_rev: number } | null> {
+    const result = await this.client.query({
+      query: `
+        SELECT published_solana, published_base, pub_status_rev
+        FROM published_feed_values FINAL
+        WHERE feed_id = {feedId:String}
+          AND feed_version = {feedVersion:UInt16}
+          AND computed_at = {computedAt:String}
+          AND revision = {revision:UInt16}
+        ORDER BY pub_status_rev DESC
+        LIMIT 1
+      `,
+      query_params: { feedId, feedVersion, computedAt, revision },
+      format: 'JSONEachRow',
+    })
+    const rows = (await result.json()) as Array<{ published_solana: string | null; published_base: string | null; pub_status_rev: number }>
+    return rows[0] ?? null
+  }
+
+  /** Insert a publication-status revision row (pub_status_rev > 0). */
+  async insertStatusRevisionRow(
+    original: PublishedFeedRow,
+    publishedSolana: string | null,
+    publishedBase: string | null,
+  ): Promise<void> {
+    const row: PublishedFeedRow = {
+      ...original,
+      pub_status_rev: original.pub_status_rev + 1,
+      published_solana: publishedSolana,
+      published_base: publishedBase,
+    }
     await this.client.insert({
       table: 'published_feed_values',
       values: [row],
