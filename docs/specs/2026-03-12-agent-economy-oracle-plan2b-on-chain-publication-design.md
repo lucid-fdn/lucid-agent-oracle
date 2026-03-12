@@ -429,6 +429,20 @@ The existing `publishFeedValue` function currently publishes to `TOPICS.INDEX_UP
 
 ```typescript
 // After persisting to ClickHouse and publishing INDEX_UPDATES:
+
+// Compute real confidence using the versioned formula.
+// Plan 2B: identity_confidence, anomaly_cleanliness, revision_stability
+// default to 1.0 (optimistic). Plan 3 wires up identity resolution
+// and anomaly detection to supply real values.
+const confidence = computeConfidence({
+  source_diversity_score: result.completeness, // proxy: completeness ≈ source diversity in single-source v1
+  identity_confidence: 1.0,                    // default until identity resolution ships
+  data_completeness: result.completeness,
+  anomaly_cleanliness: 1.0,                    // default until anomaly detection ships
+  freshness_score: computeFreshnessScore(result.freshnessMs, def.update_interval_ms),
+  revision_stability: 1.0,                     // default: no restatements in Plan 2B
+})
+
 const publicationRequest: PublicationRequest = {
   feed_id: result.feedId,
   feed_version: def.version,
@@ -437,7 +451,7 @@ const publicationRequest: PublicationRequest = {
   value_json: result.valueJson,
   value_usd: result.valueUsd,
   value_index: result.valueIndex,
-  confidence: result.completeness, // TODO(Plan 3): use computeConfidence() — currently mirrors completeness as a Plan 2A placeholder
+  confidence,
   completeness: result.completeness,
   input_manifest_hash: result.inputManifestHash,
   computation_hash: result.computationHash,
@@ -453,7 +467,9 @@ await producer.publishJson(TOPICS.PUBLICATION, result.feedId, publicationRequest
 
 1. **New type**: `PublicationRequest` added to `@lucid/oracle-core` types
 2. **New publish call**: `publishJson(TOPICS.PUBLICATION, ...)` in `publishFeedValue`
-3. **No other changes** — worker continues to own computation, attestation, and ClickHouse persistence. The publisher only handles chain posting.
+3. **Real confidence**: `publishFeedValue` calls `computeConfidence()` with available inputs instead of mirroring `completeness`. Three inputs default to `1.0` (identity_confidence, anomaly_cleanliness, revision_stability) until Plan 3 wires up real values. `FeedComputeResult` gains a `freshnessMs` field (age of newest input event) so `computeFreshnessScore` can produce a real value.
+4. **Same change applies to the `PublishedFeedRow`** inserted into ClickHouse — both the publication request and the persisted row should use the real confidence score, not completeness.
+5. **No other changes** — worker continues to own computation, attestation, and ClickHouse persistence. The publisher only handles chain posting.
 
 ---
 
