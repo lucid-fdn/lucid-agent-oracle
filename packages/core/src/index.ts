@@ -18,7 +18,14 @@ export {
 } from './adapters/gateway-tap.js'
 
 // Clients
-export { OracleClickHouse, type ClickHouseConfig, type RollupRow, type StoredFeedValue } from './clients/clickhouse.js'
+export {
+  OracleClickHouse,
+  type ClickHouseConfig,
+  type WindowAggregates,
+  type ProtocolUsdRow,
+  type ProviderCountRow,
+  type PublishedFeedRow,
+} from './clients/clickhouse.js'
 export { RedpandaProducer, RedpandaConsumer, TOPICS, type RedpandaConfig } from './clients/redpanda.js'
 
 // Utils
