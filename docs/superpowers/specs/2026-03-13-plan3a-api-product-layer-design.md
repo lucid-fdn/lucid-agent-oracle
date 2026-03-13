@@ -128,7 +128,7 @@ export type ProblemDetailType = Static<typeof ProblemDetail>
 
 **Error type URIs:** `https://oracle.lucid.foundation/errors/{error-type}` (e.g., `/errors/not-found`, `/errors/tier-required`, `/errors/rate-limited`).
 
-**Applied immediately to all routes** including existing `v1.ts` feed/report routes, so the API has one error dialect.
+**Applied immediately to all routes** including existing `v1.ts` feed/report routes, so the API has one error dialect. Error responses MUST set `Content-Type: application/problem+json` explicitly (not just the body shape). Implement via a shared error reply helper or Fastify `setErrorHandler`.
 
 ### 3.2 Cursor Pagination
 
@@ -138,6 +138,8 @@ export const CursorQuery = Type.Object({
   cursor: Type.Optional(Type.String({ description: 'Opaque cursor from previous response' })),
 }, { $id: 'CursorQuery' })
 
+// No `total` field — computing exact counts for aggregate queries is expensive and
+// misleading in moving datasets. Clients use `has_more` to know if more pages exist.
 export const CursorMeta = Type.Object({
   next_cursor: Type.Union([Type.String(), Type.Null()]),
   has_more: Type.Boolean(),
@@ -276,7 +278,7 @@ config: {
 **Cache invalidation (narrow, explicit):**
 - Registration success --> `del(agent:profile:{id})`, increment `oracle:lb:version`
 - Conflict resolution --> `del(agent:profile:{existing})`, `del(agent:profile:{claiming})`, increment `oracle:lb:version`
-- Lucid resolver run --> `del(oracle:protocols)`, `del(oracle:protocol:*)` (bounded set)
+- Lucid resolver run --> bounded explicit delete: `del(oracle:protocols)` + `del(oracle:protocol:{id})` for each key in `PROTOCOL_REGISTRY` (4 keys, not wildcard scan)
 - No dependency graph. No pub/sub. Direct `del()` calls in existing write paths.
 
 **Leaderboard versioned namespace:**
@@ -308,6 +310,9 @@ config: {
       return limits[req.tenant.plan] ?? 30
     },
     keyGenerator: (req: FastifyRequest) => req.tenant.id ?? req.ip,
+    // NOTE: verify exact @fastify/rate-limit per-route config API shape before implementation.
+    // The design intent (per-plan dynamic max, custom key) is correct; concrete option names
+    // must match the plugin's actual interface.
   },
 }
 ```
@@ -342,7 +347,7 @@ apps/api/src/
 +-- routes/
 |   +-- agents.ts           <-- REWRITTEN: TypeBox schemas, plugin config, thin handlers
 |   +-- protocols.ts        <-- REWRITTEN: all 3 endpoints, TypeBox schemas
-|   +-- v1.ts               <-- UPDATED: Problem Details errors, protocol list endpoint REMOVED (moved to protocols.ts)
+|   +-- v1.ts               <-- LEGACY-INTERNAL structure, PUBLIC-COMPATIBLE error contract. Protocol list REMOVED (moved to protocols.ts). Problem Details errors applied. Full schema upgrade deferred to Plan 3B.
 |   +-- identity-registration.ts  <-- KEPT: exempt from response caching
 |   +-- identity-admin.ts        <-- KEPT: exempt from response caching
 ```
@@ -380,7 +385,8 @@ app.get('/v1/oracle/agents/:id', {
       200: AgentProfileResponse,
       404: { $ref: 'ProblemDetail' },
     },
-    security: [{ apiKey: [] }],
+    // NOTE: free endpoints do NOT set security (key is optional, upgrades quota/tier)
+    // Pro/Growth endpoints set: security: [{ apiKey: [] }]
   },
   config: {
     cache: { ttl: 30, key: (req) => keys.agentProfile(req.params.id) },
