@@ -33,7 +33,7 @@ Upgrade the Oracle REST API from working handlers to a **production-grade API pr
 | OpenAPI | `@fastify/swagger` | Generates OpenAPI 3.0.0 spec from route schemas |
 | Interactive docs | `@fastify/swagger-ui` | Swagger UI at `/docs` |
 | Cache | `redis` (node-redis) | Hot cache for expensive read endpoints |
-| Rate limiting | `@fastify/rate-limit` (evaluate) or custom wrapper | Per-route, Redis-backed, per-plan limits |
+| Rate limiting | `@fastify/rate-limit` | Per-route, Redis-backed, per-plan limits |
 
 ### 2.2 New Dependencies (`apps/api/package.json`)
 
@@ -100,6 +100,8 @@ handler:     business logic  (only on cache MISS)
 onSend:      cache plugin    (Redis SET on 200 GET/HEAD only)
 ```
 
+**Registration order matters.** Auth MUST be registered before rate-limit (since rate-limit reads `request.tenant.id` for key generation). Fastify executes `onRequest` hooks in registration order.
+
 ---
 
 ## 3. Shared Schemas
@@ -153,6 +155,26 @@ Prevents casual tampering. Version field enables migration if sort keys change.
 
 **Cursor decoding** in the service layer translates to keyset WHERE: `WHERE (sort_field, id) < ($1, $2)`.
 
+**HMAC secret:** Read from `CURSOR_SECRET` env var. If not set, the API MUST refuse to start (fail-fast). No unsigned cursor fallback. Secret rotation: accept cursors signed with either current or previous secret (dual-key validation window).
+
+**Leaderboard cursor note:** The leaderboard query sorts by computed aggregates (`COUNT(DISTINCT ...)`). Keyset WHERE cannot reference aggregate aliases directly. Implementation MUST use a CTE that materializes the aggregates, then apply keyset WHERE on the outer query:
+
+```sql
+WITH ranked AS (
+  SELECT ae.id, ae.display_name, ae.erc8004_id, ae.created_at,
+    COUNT(DISTINCT wm.id)::int AS wallet_count, ...
+  FROM agent_entities ae
+  LEFT JOIN wallet_mappings wm ON ...
+  GROUP BY ae.id
+)
+SELECT * FROM ranked
+WHERE (wallet_count, id) < ($1, $2)
+ORDER BY wallet_count DESC, id DESC
+LIMIT $3
+```
+
+**Cursor stability:** Keyset pagination can skip or duplicate rows when underlying data changes between page fetches. This is inherent and acceptable. Documented in OpenAPI descriptions.
+
 **Applied to:** `agents/search`, `agents/leaderboard`, `agents/:id/activity`. NOT applied to small stable lists like `/protocols`.
 
 ### 3.3 List Envelope
@@ -173,7 +195,8 @@ export function PaginatedList<T extends TSchema>(itemSchema: T, $id: string) {
 export const AgentIdParams = Type.Object({
   id: Type.String({
     minLength: 4,
-    pattern: '^ae_',
+    maxLength: 30,
+    pattern: '^ae_[a-zA-Z0-9_-]+$',
     description: 'Agent entity ID (e.g., ae_7f3k9x2m)',
   }),
 }, { $id: 'AgentIdParams' })
@@ -181,8 +204,9 @@ export const AgentIdParams = Type.Object({
 export const ProtocolIdParams = Type.Object({
   id: Type.String({
     minLength: 2,
-    enum: ['lucid', 'virtuals', 'olas', 'erc8004'],
-    description: 'Protocol identifier',
+    maxLength: 50,
+    pattern: '^[a-z0-9_-]+$',
+    description: 'Protocol identifier (e.g., lucid, erc8004). Validated against PROTOCOL_REGISTRY at runtime.',
   }),
 }, { $id: 'ProtocolIdParams' })
 ```
@@ -263,14 +287,14 @@ config: {
 
 ### 4.3 Rate Limit Plugin (`plugins/rate-limit.ts`)
 
-**Evaluate `@fastify/rate-limit`** as the primary implementation. If it meets all requirements, use it directly. If not, wrap the existing `RateLimiter` class.
+**Use `@fastify/rate-limit`** as the primary implementation. It supports all requirements natively: Redis store, per-route config, custom key generation, and standard rate-limit headers.
 
 **Requirements:**
 - Redis-backed counters (consistent across instances)
 - Per-route configuration
 - Per-plan limits (higher limits for Pro/Growth)
 - `Retry-After` header on 429
-- RFC 9457 Problem Details response body
+- RFC 9457 Problem Details response body (via custom `errorResponseBuilder`)
 - `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` headers
 
 **Per-route config:**
@@ -279,13 +303,20 @@ config: {
 config: {
   rateLimit: {
     window: 60_000,
-    max: { free: 30, pro: 300, growth: 1000 },
-    key: (req: FastifyRequest) => req.tenant.id ?? req.ip,
+    max: (req: FastifyRequest) => {
+      const limits = { free: 30, pro: 300, growth: 1000 }
+      return limits[req.tenant.plan] ?? 30
+    },
+    keyGenerator: (req: FastifyRequest) => req.tenant.id ?? req.ip,
   },
 }
 ```
 
-**Graceful degradation:** If Redis is unavailable, fall back to in-memory `RateLimiter`. This is per-instance (not globally consistent across horizontally scaled API processes), which is acceptable as a degradation path. Document this tradeoff.
+**Relationship with parent spec daily limits:** The parent design spec defines global daily limits (Free = 1,000/day, Pro = 50,000/day). The per-route per-minute limits here are the **enforcement mechanism** — they are set to ensure daily consumption stays within the parent spec's budget under normal usage patterns. A separate global daily counter is deferred to Plan 3B (billing/usage tracking). For Plan 3A, per-route burst limits are the primary guard.
+
+**Graceful degradation:** If Redis is unavailable, `@fastify/rate-limit` falls back to in-memory store. This is per-instance (not globally consistent across horizontally scaled API processes), which is acceptable as a degradation path. The existing `RateLimiter` class stays as an additional fallback for identity registration routes.
+
+**CORS update required:** Add `X-Cache`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, `Retry-After` to `exposedHeaders` in CORS config.
 
 ---
 
@@ -311,7 +342,7 @@ apps/api/src/
 +-- routes/
 |   +-- agents.ts           <-- REWRITTEN: TypeBox schemas, plugin config, thin handlers
 |   +-- protocols.ts        <-- REWRITTEN: all 3 endpoints, TypeBox schemas
-|   +-- v1.ts               <-- UPDATED: Problem Details errors only (full schema upgrade deferred)
+|   +-- v1.ts               <-- UPDATED: Problem Details errors, protocol list endpoint REMOVED (moved to protocols.ts)
 |   +-- identity-registration.ts  <-- KEPT: exempt from response caching
 |   +-- identity-admin.ts        <-- KEPT: exempt from response caching
 ```
@@ -369,19 +400,52 @@ app.get('/v1/oracle/agents/:id', {
 })
 ```
 
-### 5.4 Service Layer Changes (Minimal)
+### 5.4 Response Envelope
+
+**Breaking change:** Response shapes change from Plan 3A v1. This is acceptable because v1 was not yet released publicly.
+
+| Endpoint | v1 shape | v2 shape |
+|----------|----------|----------|
+| `agents/:id` | `{ agent }` | `{ data: AgentProfile }` |
+| `agents/search` | `{ agents[], total, limit, offset }` | `{ data: AgentSearchResult[], pagination: CursorMeta }` |
+| `agents/leaderboard` | `{ agents[], sort, total, limit, offset }` | `{ data: LeaderboardEntry[], pagination: CursorMeta }` |
+| `agents/:id/metrics` | flat object | `{ data: AgentMetrics }` |
+| `agents/:id/activity` | `{ agent_id, events[], limit, offset }` | `{ data: ActivityEvent[], pagination: CursorMeta }` |
+| `protocols` | `{ protocols[] }` | `{ data: ProtocolSummary[] }` |
+| `protocols/:id` | `{ protocol }` | `{ data: ProtocolDetail }` |
+| `protocols/:id/metrics` | flat object | `{ data: ProtocolMetrics }` |
+
+All errors: RFC 9457 Problem Details with `Content-Type: application/problem+json`.
+
+### 5.5 Search Cross-Field Validation
+
+TypeBox cannot express "at least one of these optional fields must be present" declaratively. This validation **stays in the handler** as explicit logic:
+
+```typescript
+const { wallet, protocol, protocol_id, erc8004_id, q } = request.query
+if (!wallet && !protocol && !protocol_id && !erc8004_id && !q) {
+  return reply.status(400).send({ type: '...', title: 'Missing search criteria', status: 400 })
+}
+```
+
+### 5.6 Protocol List Migration
+
+`GET /v1/oracle/protocols` **moves from `v1.ts` to `protocols.ts`**. The hardcoded list in `v1.ts` is removed. The rebuilt `protocols.ts` handles all 3 protocol endpoints.
+
+### 5.7 Service Layer Changes (Minimal)
 
 The `AgentQueryService` methods stay. Changes:
 
 1. **Add cursor support** to `search()`, `leaderboard()`, `getActivity()`:
    - Accept decoded cursor object (sort value + entity ID)
-   - Build keyset WHERE clause: `WHERE (sort_field, id) < ($1, $2)`
+   - Leaderboard uses CTE for computed aggregates (see Section 3.2)
+   - Build keyset WHERE on outer query
    - Return next cursor (encode from last row)
 2. **Remove** `SearchParams`, `LeaderboardParams` interfaces (TypeBox schemas replace them)
 3. **`exists()` stays** for activity endpoint
 4. **No changes** to `getProfile()`, `getMetrics()`, `getProtocol()`, `getProtocolMetrics()`
 
-### 5.5 What Gets Deleted from Routes
+### 5.8 What Gets Deleted from Routes
 
 - All `as { id: string }` casts (TypeBox type provider infers)
 - All inline `x-api-tier` checks (auth plugin resolves tier from API key)
@@ -525,13 +589,16 @@ If `REDIS_URL` is not set or Redis becomes unavailable:
 
 Plan 3A v2 is complete when:
 
-1. All 8 endpoints have TypeBox schemas with runtime validation + fast serialization
+1. All 8 Plan 3A endpoints (5 agent + 3 protocol) have TypeBox schemas with runtime validation + fast serialization
 2. OpenAPI 3.0 spec auto-generated and accessible at `/docs` with interactive Swagger UI
 3. API key auth resolves tier server-side (Redis-cached, DB fallback)
 4. Redis caching on 6 endpoints with correct TTLs, plan-aware keys, and explicit invalidation
-5. Rate limiting on all endpoints, Redis-backed, per-plan limits
-6. Cursor pagination on search, leaderboard, activity (signed, versioned)
-7. RFC 9457 Problem Details on ALL error responses (including v1.ts feeds/reports)
+5. Rate limiting on all 8 endpoints via `@fastify/rate-limit`, Redis-backed, per-plan limits
+6. Cursor pagination on search, leaderboard, activity (signed, versioned, CTE for leaderboard aggregates)
+7. RFC 9457 Problem Details (`application/problem+json`) on ALL error responses (including v1.ts feeds/reports)
 8. Graceful degradation when Redis is unavailable
-9. 50+ tests passing, 0 failures
-10. Latency SLO: `/agents/:id` < 2s (99.5%) with Redis HIT < 50ms
+9. `GET /v1/oracle/protocols` migrated from `v1.ts` to `protocols.ts`
+10. CORS `exposedHeaders` updated for `X-Cache`, rate-limit headers
+11. Redis client graceful shutdown in API close handler
+12. 50+ tests passing, 0 failures
+13. Latency SLO: `/agents/:id` < 2s (99.5%) with Redis HIT < 50ms
