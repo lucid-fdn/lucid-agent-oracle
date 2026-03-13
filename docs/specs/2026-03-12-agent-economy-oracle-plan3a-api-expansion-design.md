@@ -1,7 +1,7 @@
 # Plan 3A: API Expansion — Agents as First-Class Noun
 
 **Date:** 2026-03-12
-**Status:** In Progress
+**Status:** Implemented
 **Authors:** RaijinLabs + Claude
 **Parent spec:** `docs/specs/2026-03-12-agent-economy-oracle-design.md`
 **Depends on:** Plan 4B (Self-Registration + Identity Evidence)
