@@ -4,7 +4,7 @@ import {
   OracleClickHouse,
   type FeedId, type PublishedFeedRow,
 } from '@lucid/oracle-core'
-import { PROTOCOL_REGISTRY } from '../services/agent-query.js'
+import { sendProblem } from '../schemas/common.js'
 
 // In-memory cache (replaced from Map<string, PublishedFeedValue> to Map<string, PublishedFeedRow>)
 const latestFeedValues = new Map<string, PublishedFeedRow>()
@@ -89,7 +89,12 @@ export function registerOracleRoutes(app: FastifyInstance): void {
     const { id } = request.params
     const def = V1_FEEDS[id as FeedId]
     if (!def) {
-      return reply.status(404).send({ error: 'Feed not found', feed_id: id })
+      return sendProblem(reply, 404, {
+        type: 'not-found',
+        title: 'Feed Not Found',
+        detail: `No feed found with id '${id}'.`,
+        code: 'FEED_NOT_FOUND',
+      })
     }
 
     const row = latestFeedValues.get(id)
@@ -105,7 +110,12 @@ export function registerOracleRoutes(app: FastifyInstance): void {
     const { id } = request.params
     const def = V1_FEEDS[id as FeedId]
     if (!def) {
-      return reply.status(404).send({ error: 'Feed not found', feed_id: id })
+      return sendProblem(reply, 404, {
+        type: 'not-found',
+        title: 'Feed Not Found',
+        detail: `No feed found with id '${id}'.`,
+        code: 'FEED_NOT_FOUND',
+      })
     }
 
     const base = {
@@ -166,16 +176,6 @@ export function registerOracleRoutes(app: FastifyInstance): void {
         formula: 'sum(all_protocol_values_across_components)',
       },
       canonical_json_version: 'v1',
-    }
-  })
-
-  // ---- GET /v1/oracle/protocols ----
-  app.get('/v1/oracle/protocols', async () => {
-    return {
-      protocols: Object.entries(PROTOCOL_REGISTRY).map(([id, meta]) => ({
-        id,
-        ...meta,
-      })),
     }
   })
 

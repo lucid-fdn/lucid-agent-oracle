@@ -31,9 +31,13 @@ describe('Oracle Economy API', () => {
     expect(body.feed.name).toBe('Agent Economy GDP')
   })
 
-  it('GET /v1/oracle/feeds/nonexistent returns 404', async () => {
+  it('GET /v1/oracle/feeds/nonexistent returns 404 (Problem Details)', async () => {
     const res = await app.inject({ method: 'GET', url: '/v1/oracle/feeds/nonexistent' })
     expect(res.statusCode).toBe(404)
+    const body = res.json()
+    expect(body.type).toContain('not-found')
+    expect(body.status).toBe(404)
+    expect(body.title).toBe('Feed Not Found')
   })
 
   it('GET /v1/oracle/feeds/aegdp/methodology returns confidence formula', async () => {
@@ -44,12 +48,9 @@ describe('Oracle Economy API', () => {
     expect(body.confidence_formula.weights.source_diversity_score).toBe(0.25)
   })
 
-  it('GET /v1/oracle/protocols returns indexed protocols', async () => {
+  it('GET /v1/oracle/protocols is no longer registered on v1 routes', async () => {
     const res = await app.inject({ method: 'GET', url: '/v1/oracle/protocols' })
-    expect(res.statusCode).toBe(200)
-    const body = res.json()
-    expect(body.protocols.length).toBeGreaterThanOrEqual(4)
-    expect(body.protocols.find((p: any) => p.id === 'lucid')).toBeTruthy()
+    expect(res.statusCode).toBe(404)
   })
 
   it('GET /v1/oracle/reports/latest returns null when no feeds computed', async () => {
