@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid'
 import type { DbClient, RedpandaProducer } from '@lucid/oracle-core'
 import { TOPICS } from '@lucid/oracle-core'
+import { invalidateProtocolCaches } from './redis.js'
 
 interface ResolverResult {
   skipped: boolean
@@ -48,6 +49,11 @@ export class LucidResolver {
     } finally {
       // Release advisory lock
       await this.db.query("SELECT pg_advisory_unlock(hashtext('lucid_resolver'))").catch(() => {})
+    }
+
+    // Invalidate protocol caches after resolver run
+    if (result.processed > 0) {
+      await invalidateProtocolCaches()
     }
 
     return result

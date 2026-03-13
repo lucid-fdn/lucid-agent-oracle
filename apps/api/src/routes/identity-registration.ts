@@ -10,6 +10,7 @@ import {
 import type { DbClient, RedpandaProducer } from '@lucid/oracle-core'
 import { RegistrationHandler } from '../services/registration-handler.js'
 import { RateLimiter } from '../services/rate-limiter.js'
+import { invalidateAgentCaches } from '../services/redis.js'
 
 const challengeRateByAddr = new RateLimiter(60_000, 10)
 const challengeRateByIP = new RateLimiter(60_000, 30)
@@ -173,6 +174,11 @@ export function registerIdentityRoutes(
         error: result.error,
         conflict_id: result.data?.conflict_id,
       })
+    }
+
+    // Invalidate Redis cache for newly registered agent
+    if (result.data?.agent_entity) {
+      await invalidateAgentCaches(result.data.agent_entity as string)
     }
 
     return reply.status(result.status).send(result.data)

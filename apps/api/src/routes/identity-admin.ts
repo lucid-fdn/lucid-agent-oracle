@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type { DbClient, RedpandaProducer } from '@lucid/oracle-core'
 import { TOPICS } from '@lucid/oracle-core'
 import { LucidResolver } from '../services/lucid-resolver.js'
+import { invalidateAgentCaches } from '../services/redis.js'
 
 interface ResolveInput {
   resolution: 'keep_existing' | 'keep_claiming' | 'merge'
@@ -87,6 +88,9 @@ export async function resolveConflict(
     await db.query('ROLLBACK').catch(() => {})
     throw err
   }
+
+  // Invalidate Redis cache for both entities involved in the conflict
+  await invalidateAgentCaches(conflict.existing_entity as string, conflict.claiming_entity as string)
 
   return { status: 200, data: { id: conflictId, resolution: input.resolution } }
 }
