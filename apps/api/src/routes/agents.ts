@@ -171,7 +171,12 @@ export function registerAgentRoutes(app: FastifyInstance, db: DbClient): void {
       },
     },
     config: {
-      cache: { ttl: 30 },
+      cache: {
+        ttl: 30,
+        key: (request: { params: Record<string, string>; tenant?: { plan: string } }) => {
+          return keys.agentProfile(request.params.id)
+        },
+      },
       rateLimit: { max: 60 },
     },
   }, async (request, reply) => {

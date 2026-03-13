@@ -1,5 +1,8 @@
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
+import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
+import swagger from '@fastify/swagger'
+import swaggerUi from '@fastify/swagger-ui'
 import {
   OracleClickHouse,
   RedpandaConsumer,
@@ -20,14 +23,78 @@ import { registerAdminRoutes } from './routes/identity-admin.js'
 import { registerAgentRoutes } from './routes/agents.js'
 import { registerProtocolRoutes } from './routes/protocols.js'
 import { LucidResolver } from './services/lucid-resolver.js'
+import { initRedis, closeRedis, loadLeaderboardVersion } from './services/redis.js'
+import { authPlugin } from './plugins/auth.js'
+import cachePlugin from './plugins/cache.js'
+import rateLimitPlugin from './plugins/rate-limit.js'
+import { ProblemDetail, CursorQuery, CursorMeta, AgentIdParams, ProtocolIdParams, registerGlobalErrorHandler } from './schemas/common.js'
+import { assertCursorSecret } from './utils/cursor.js'
 
 const PORT = parseInt(process.env.PORT ?? '4040', 10)
-const app = Fastify({ logger: true })
+const app = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>()
+
+// OpenAPI / Swagger
+await app.register(swagger, {
+  openapi: {
+    openapi: '3.0.0',
+    info: {
+      title: 'Lucid Agent Oracle API',
+      version: '1.0.0',
+      description: 'Economic intelligence for the agent economy.',
+    },
+    servers: [
+      { url: process.env.API_PUBLIC_URL ?? 'http://localhost:4040' },
+    ],
+    tags: [
+      { name: 'agents', description: 'Agent identity, metrics, and activity' },
+      { name: 'protocols', description: 'Protocol registry and metrics' },
+      { name: 'feeds', description: 'Oracle economic feeds' },
+      { name: 'reports', description: 'Signed attestation reports' },
+    ],
+    components: {
+      securitySchemes: {
+        apiKey: {
+          type: 'apiKey',
+          name: 'x-api-key',
+          in: 'header',
+          description: 'API key for authenticated access. Determines plan tier (free/pro/growth).',
+        },
+      },
+    },
+  },
+})
+await app.register(swaggerUi, { routePrefix: '/docs' })
+
+// Shared TypeBox schemas for $ref reuse in OpenAPI
+app.addSchema(ProblemDetail)
+app.addSchema(CursorQuery)
+app.addSchema(CursorMeta)
+app.addSchema(AgentIdParams)
+app.addSchema(ProtocolIdParams)
+
+// Global error handler — ensures ALL errors are RFC 9457 Problem Details
+registerGlobalErrorHandler(app)
 
 await app.register(cors, {
   origin: true,
-  exposedHeaders: ['X-Request-Id'],
+  exposedHeaders: [
+    'X-Request-Id',
+    'X-Cache',
+    'X-RateLimit-Limit',
+    'X-RateLimit-Remaining',
+    'X-RateLimit-Reset',
+    'Retry-After',
+  ],
 })
+
+// Init Redis (before plugins that need it)
+const redis = await initRedis(process.env.REDIS_URL)
+if (redis) {
+  app.log.info('Redis connected')
+  await loadLeaderboardVersion()
+} else {
+  app.log.warn('REDIS_URL not set — running without Redis cache')
+}
 
 app.get('/health', async () => ({
   status: 'ok',
@@ -154,6 +221,15 @@ if (databaseUrl && redpandaBrokers) {
     app.log.info(`${webhookCount} webhook route(s) auto-mounted from adapter registry`)
   }
 
+  // Plan 3A v2: Fail-fast on missing CURSOR_SECRET
+  assertCursorSecret()
+
+  // Plan 3A v2: Register plugins (ORDER MATTERS: auth -> rate-limit -> cache)
+  await app.register(authPlugin, { db: client, redis })
+  await app.register(rateLimitPlugin, { redis })
+  await app.register(cachePlugin, { redis })
+  app.log.info('Auth, rate-limit, and cache plugins registered')
+
   // Plan 3A: Agent + protocol query routes
   registerAgentRoutes(app, client)
   registerProtocolRoutes(app, client)
@@ -203,6 +279,8 @@ const shutdown = async () => {
   await watchlistConsumer?.disconnect().catch(() => {})
   await resolverProducer?.disconnect().catch(() => {})
   await pgClient?.end().catch(() => {})
+  // Plan 3A v2 resources
+  await closeRedis()
   // Plan 2A resources
   await consumer?.disconnect()
   await clickhouse?.close()
