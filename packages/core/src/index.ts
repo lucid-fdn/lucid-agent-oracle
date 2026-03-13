@@ -25,6 +25,20 @@ export { topicForSource } from './adapters/topic-for-source.js'
 export { mountWebhookRoutes } from './adapters/webhook-router.js'
 export { dispatchIdentityEvent, getIdentityTopics } from './adapters/identity-dispatch.js'
 
+// Identity verification (Plan 4B)
+export type { WalletVerifier } from './identity/wallet-verifier.js'
+export { VerifierRegistry, verifierRegistry } from './identity/wallet-verifier.js'
+export { evmVerifier } from './identity/evm-verifier.js'
+export { solanaVerifier } from './identity/solana-verifier.js'
+export {
+  formatChallengeMessage,
+  formatAuthMessage,
+  CHALLENGE_TTL_MS,
+  AUTH_SIGNATURE_MAX_AGE_MS,
+  type ChallengeMessageParams,
+  type AuthMessageParams,
+} from './identity/challenge.js'
+
 // Built-in adapter definitions
 export { gatewayTapAdapter } from './adapters/gateway-tap-adapter.js'
 export { erc8004Adapter } from './adapters/erc8004-adapter.js'
