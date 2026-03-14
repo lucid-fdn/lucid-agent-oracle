@@ -38,7 +38,9 @@ Three new endpoints are required before MCP generation. They follow Plan 3A v2 p
 - `apps/api/src/routes/reports.ts` — new file for `verify_report`
 - `apps/api/src/routes/agents.ts` — add `model_usage` to the existing agents route file
 
-**ClickHouse access:** Currently only `v1.ts` uses ClickHouse (via startup functions, not injection). The new `feeds.ts` and `agents.ts` routes need direct ClickHouse access. Pattern: `registerFeedRoutes(app, db, clickhouse)` / update `registerAgentRoutes(app, db, clickhouse)` — the `OracleClickHouse` instance is passed from `server.ts` at registration time, same as `db: DbClient`.
+**ClickHouse access:** Currently only `v1.ts` uses ClickHouse (via startup functions, not injection). The new `feeds.ts`, `agents.ts`, and `reports.ts` routes need direct ClickHouse access. Pattern: `registerFeedRoutes(app, db, clickhouse)` / update `registerAgentRoutes(app, db, clickhouse)` / `registerReportRoutes(app, clickhouse)` — the `OracleClickHouse` instance is passed from `server.ts` at registration time, same as `db: DbClient`.
+
+**server.ts registration ordering:** Currently ClickHouse and DB are initialized in separate conditional blocks. New route registrations should go inside the existing DB block (where `registerAgentRoutes`/`registerProtocolRoutes` are registered), since they need both `db` (for auth plugin) and `clickhouse`. The `clickhouse` variable is declared outside the DB block and is `null` when `CLICKHOUSE_URL` is not set. Routes should handle `clickhouse: OracleClickHouse | null` gracefully — if `null`, ClickHouse-backed endpoints return `has_data: false` with empty data (not 500). This matches the empty data contract in Section 6.
 
 **TypeBox schemas:** New schemas go in:
 
@@ -91,6 +93,8 @@ modelUsage: (period: string, limit: number, plan: string) =>
 ```
 
 **Empty result:** `has_data: false`, `points: []`. Not an error — 200 with empty data.
+
+**`value` field format:** Returned as a raw JSON string (matching existing `toPublicFeedValue` in `v1.ts` which returns `row.value_json` as-is). MCP tool consumers should parse it as JSON to extract structured values.
 
 **feed_version:** Sourced from `V1_FEEDS[feedId].version` (currently all feeds are version 1). The route validates `feedId` against `V1_FEEDS` keys — invalid IDs return 404.
 
@@ -250,7 +254,7 @@ The `report` field accepts the full signed report envelope as produced by `Attes
 
 1. **Signature check:** Use `AttestationService.verify()` from `oracle-core` to verify Ed25519 signature against the canonical JSON payload.
 2. **Payload integrity:** Recompute canonical JSON hash of the report body (excluding signature fields) and compare against `computation_hash`.
-3. **Publication lookup:** If the report contains a `feed_id` + `computed_at`, query `published_feed_values` in ClickHouse for matching `published_solana` / `published_base` columns (both `String | null` — see `PublishedFeedRow` in `packages/core/src/clients/clickhouse.ts`). These store tx hashes as strings, not booleans. Return null if no on-chain publication found. **No live RPC calls** — this is a lookup against stored state only. Can reuse the existing `OracleClickHouse.queryPublicationStatus()` method.
+3. **Publication lookup:** If the report contains feed entries with `feed_id` + `computed_at`, look up on-chain publication status from `published_feed_values` in ClickHouse. Columns `published_solana` / `published_base` are both `String | null` — see `PublishedFeedRow` in `packages/core/src/clients/clickhouse.ts`. Return null if no on-chain publication found. **No live RPC calls** — this is a lookup against stored state only. The existing `OracleClickHouse.queryPublicationStatus(feedId, feedVersion, computedAt, revision)` method can be reused — source `feedVersion` from `V1_FEEDS[feedId].version` and default `revision` to `0` (first revision). If the report contains multiple feeds, iterate and collect all publication statuses.
 
 **Errors:**
 - 400: Invalid report format (missing required fields)
