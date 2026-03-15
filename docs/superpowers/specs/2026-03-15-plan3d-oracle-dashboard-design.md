@@ -220,6 +220,25 @@ Every SDK method wrapped with `useQueryWithCache` (existing LucidMerged pattern)
 | `useProtocolMetrics(id)` | `protocols.metrics({ id })` | 120s | Pro |
 | `useLatestReport()` | `reports.latest()` | 30s | Free |
 
+### Pro Hook Gating
+
+**Pro-tier hooks must NOT fire unless the user has an API key.** The `OracleDataProvider` exposes a `useOracleApiKey()` hook that returns the current API key (or `undefined` for anonymous users). All Pro hooks set `enabled: !!apiKey` so they remain idle until the user authenticates. This prevents unconditional 403 requests from making the network layer noisy while the UI shows `<ProGate>` overlays.
+
+```typescript
+// In data-provider.tsx — alongside OracleContext
+const ApiKeyContext = createContext<string | undefined>(undefined)
+export function useOracleApiKey() { return useContext(ApiKeyContext) }
+
+// In each Pro hook:
+export function useAgentMetrics(id: string) {
+  const apiKey = useOracleApiKey()
+  // ...
+  return useQueryWithCache({ ..., enabled: !!id && !!apiKey })
+}
+```
+
+Pages that contain Pro sections (agent detail, protocol detail, agents model-usage tab) call the Pro hook unconditionally in the component body — React Query's `enabled: false` ensures zero network requests are made. The `<ProGate>` overlay renders the blurred placeholder. When the user authenticates, `apiKey` becomes truthy, `enabled` flips to `true`, and the hook fires — no remount needed.
+
 ### SSE-Ready Architecture
 
 Phase 1 (now): Polling via React Query `refetchInterval` on live-data hooks (feeds, leaderboard, latest report — 30s interval).
@@ -231,7 +250,7 @@ Phase 2 (Plan 3E): Add SSE EventSource in `OracleDataProvider` that pushes updat
 
 1. **Stats ticker** (fixed below nav): Scrolling marquee with AAI, APRI, AEGDP values + 24h deltas. Green pulsing "LIVE" dot. 30s auto-refresh.
 2. **Feed hero**: Three large feed cards — current value (large type), confidence bar, 24h sparkline (TradingView mini), staleness dot (green/yellow/red), link to detail.
-3. **Global stats row**: 4 metric boxes — Total Agents, Total Protocols, Active Feeds, Last Report timestamp.
+3. **Global stats row**: 4 metric boxes — Total Agents (from leaderboard `pagination.total`, not slice length), Total Protocols, Active Feeds, Last Report timestamp (from `report.timestamp` or `report.report_timestamp`, NOT `new Date()`).
 4. **Leaderboard preview**: Top 5 agents table (rank, name, wallet count, protocol count, reputation). "View Full Leaderboard →" link.
 5. **Protocol grid**: Cards per protocol with chain badges, agent count, status indicator.
 
@@ -319,10 +338,10 @@ Reuses existing Lucid design tokens:
 | Package | Purpose | Status |
 |---------|---------|--------|
 | `@lucid-fdn/oracle` | Oracle SDK — all data fetching | **New install** |
-| `lightweight-charts` | TradingView charts for feed history | Already in LucidMerged |
+| `lightweight-charts` | TradingView charts for feed history | Already in LucidMerged (^4.2.2) |
 | `recharts` | Simple charts for metrics (pie, bar, area) | **New install** |
 
-Other dependencies used (React Query, Radix, motion/react, next-themes, Privy) are already in LucidMerged.
+Other dependencies already in LucidMerged: React Query (^5.90.2), Radix UI, motion (^12.23.24), next-themes, Privy, lucide-react.
 
 ## Feature Flag
 

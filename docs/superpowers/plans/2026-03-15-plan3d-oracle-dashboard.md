@@ -93,7 +93,7 @@ cd C:\LucidMerged
 npm install @lucid-fdn/oracle recharts --legacy-peer-deps
 ```
 
-Verify both appear in `package.json` dependencies.
+Verify both appear in `package.json` dependencies. Note: `lightweight-charts` (^4.2.2) is already installed — do NOT reinstall it.
 
 - [ ] **Step 2: Add feature flag**
 
@@ -184,6 +184,7 @@ import { createContext, useContext, useMemo, type ReactNode } from 'react'
 import { LucidOracle } from '@lucid-fdn/oracle'
 
 const OracleContext = createContext<LucidOracle | null>(null)
+const ApiKeyContext = createContext<string | undefined>(undefined)
 
 interface OracleDataProviderProps {
   children: ReactNode
@@ -195,7 +196,16 @@ export function OracleDataProvider({ children, apiKey }: OracleDataProviderProps
     () => new LucidOracle(apiKey ? { apiKey } : undefined),
     [apiKey],
   )
-  return <OracleContext.Provider value={oracle}>{children}</OracleContext.Provider>
+  return (
+    <ApiKeyContext.Provider value={apiKey}>
+      <OracleContext.Provider value={oracle}>{children}</OracleContext.Provider>
+    </ApiKeyContext.Provider>
+  )
+}
+
+/** Returns the current API key, or undefined for anonymous users. Pro hooks use this to gate `enabled`. */
+export function useOracleApiKey(): string | undefined {
+  return useContext(ApiKeyContext)
 }
 
 export function useOracleClient(): LucidOracle {
@@ -227,7 +237,7 @@ Create `src/lib/oracle/hooks.ts`:
 'use client'
 
 import { useQueryWithCache } from '@/hooks/useQueryWithCache'
-import { useOracleClient } from './data-provider'
+import { useOracleClient, useOracleApiKey } from './data-provider'
 import { oracleKeys } from './cache-keys'
 
 // Shared retry: skip retries on deterministic 4xx errors
@@ -331,36 +341,40 @@ export function useAgentProfile(id: string) {
 
 export function useAgentMetrics(id: string) {
   const oracle = useOracleClient()
+  const apiKey = useOracleApiKey()
   return useQueryWithCache({
     cacheKey: 'oracle_agents',
     queryKey: oracleKeys.agentMetrics(id),
     queryFn: () => oracle.agents.metrics({ id }),
     staleTime: 120_000,
     retry: oracleRetry,
-    enabled: !!id,
+    enabled: !!id && !!apiKey, // Pro-only: don't fire without API key
   })
 }
 
 export function useAgentActivity(id: string, cursor?: string) {
   const oracle = useOracleClient()
+  const apiKey = useOracleApiKey()
   return useQueryWithCache({
     cacheKey: 'oracle_agents',
     queryKey: oracleKeys.agentActivity(id, cursor),
     queryFn: () => oracle.agents.activity({ id, cursor } as any),
     staleTime: 120_000,
     retry: oracleRetry,
-    enabled: !!id,
+    enabled: !!id && !!apiKey, // Pro-only: don't fire without API key
   })
 }
 
 export function useModelUsage(period: string) {
   const oracle = useOracleClient()
+  const apiKey = useOracleApiKey()
   return useQueryWithCache({
     cacheKey: 'oracle_agents',
     queryKey: oracleKeys.modelUsage(period),
     queryFn: () => oracle.agents.modelUsage({ period } as any),
     staleTime: 120_000,
     retry: oracleRetry,
+    enabled: !!apiKey, // Pro-only: don't fire without API key
   })
 }
 
@@ -393,13 +407,14 @@ export function useProtocolDetail(id: string) {
 
 export function useProtocolMetrics(id: string) {
   const oracle = useOracleClient()
+  const apiKey = useOracleApiKey()
   return useQueryWithCache({
     cacheKey: 'oracle_protocols',
     queryKey: oracleKeys.protocolMetrics(id),
     queryFn: () => oracle.protocols.metrics({ id }),
     staleTime: 120_000,
     retry: oracleRetry,
-    enabled: !!id,
+    enabled: !!id && !!apiKey, // Pro-only: don't fire without API key
   })
 }
 
@@ -813,7 +828,10 @@ export function StatsTicker() {
           <div className="flex shrink-0 items-center gap-2 text-slate-500">
             <span>Last report:</span>
             <span className="tabular-nums text-slate-400">
-              {new Date().toLocaleTimeString()}
+              {(() => {
+                const ts = (reportData as any)?.report?.timestamp ?? (reportData as any)?.report?.report_timestamp ?? (reportData as any)?.timestamp
+                return ts ? new Date(ts).toLocaleTimeString() : '—'
+              })()}
             </span>
           </div>
         )}
@@ -1210,10 +1228,16 @@ export default function OracleHomePage() {
       {/* Global Stats */}
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
-          { label: 'Total Agents', value: lbEntries.length > 0 ? `${lbEntries.length}+` : '—' },
+          { label: 'Total Agents', value: (lbData as any)?.pagination?.total ?? (lbData as any)?.meta?.total ?? (lbEntries.length || '—') },
           { label: 'Protocols', value: protocolList.length || '—' },
           { label: 'Active Feeds', value: feedList.length || '—' },
-          { label: 'Last Report', value: reportData ? 'Active' : '—' },
+          {
+            label: 'Last Report',
+            value: (() => {
+              const ts = (reportData as any)?.report?.timestamp ?? (reportData as any)?.report?.report_timestamp ?? (reportData as any)?.timestamp
+              return ts ? new Date(ts).toLocaleTimeString() : '—'
+            })(),
+          },
         ].map((stat) => (
           <Card key={stat.label} className="border-white/5 bg-white/[0.02] p-4">
             <p className="text-xs text-slate-400">{stat.label}</p>
