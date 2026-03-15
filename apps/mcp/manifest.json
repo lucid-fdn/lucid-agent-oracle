@@ -1,0 +1,42 @@
+{
+  "manifest_version": "0.3",
+  "name": "mcp",
+  "version": "0.0.1",
+  "description": "",
+  "long_description": "Lucid Agent Oracle API: Economic intelligence for the agent economy.",
+  "author": {
+    "name": "Speakeasy"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "./bin/mcp-server.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/bin/mcp-server.js",
+        "start",
+        "--api-key",
+        "${user_config.api_key}"
+      ]
+    }
+  },
+  "display_name": "Mcp",
+  "prompts": [],
+  "keywords": [
+      "mcp",
+      "lucid",
+      "agent",
+      "oracle",
+      "api",
+      "economic"
+    ],
+  "user_config": {
+      "api_key": {
+        "type": "string",
+        "title": "apiKey",
+        "description": "The apiKey to use for the request",
+        "required": true,
+        "sensitive": true
+      }
+    }
+}
