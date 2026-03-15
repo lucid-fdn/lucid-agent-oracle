@@ -257,42 +257,42 @@ All methods return typed response objects. Speakeasy generates request/response 
 
 ### 4.3 Error Handling
 
-Speakeasy generates typed error classes from RFC 9457 Problem Details responses. The SDK surfaces these as typed exceptions:
+Speakeasy generates typed error responses from the OpenAPI spec. The generated client exposes SDK error classes for non-2xx responses. Exact class names and shapes are verified after generation — the directional contract is:
 
 ```typescript
 try {
   const agent = await oracle.agents.get({ id: 'nonexistent' })
 } catch (err) {
-  if (err instanceof errors.SDKError) {
-    // err.statusCode — 404
-    // err.body — RFC 9457 Problem Details JSON
-    // err.rawResponse — full Response object
-  }
+  // Generated SDK error with status code, response body, raw Response
+  // Exact class name determined by Speakeasy generation output
 }
 ```
 
-API error codes propagated: 400 (validation), 401 (invalid key), 403 (tier required), 404 (not found), 429 (rate limited), 500 (internal).
+API error codes propagated: 400 (validation), 401 (invalid key), 403 (tier required), 404 (not found), 429 (rate limited), 500 (internal). All errors follow RFC 9457 Problem Details format.
 
 ### 4.4 Auth Model
 
+**API key is optional globally.** Free-tier endpoints work anonymously with no key. Some endpoints require auth and a specific plan tier. The SDK must not make auth feel mandatory.
+
 | Scenario | Behavior |
 |----------|----------|
-| No key, no env var | Anonymous / free tier |
-| `LUCID_ORACLE_API_KEY` env var set | Auto-used (via `envVarPrefix`) |
+| No key, no env var | Anonymous — free-tier endpoints work, pro endpoints return 403 |
+| `LUCID_ORACLE_API_KEY` env var set | Auto-used (via `envVarPrefix`); tier determined by key's plan |
 | `apiKey` passed to constructor | Takes precedence over env var |
-| Invalid key | 401 SDKError |
-| Free key hitting pro endpoint | 403 SDKError |
+| Invalid/revoked key | 401 error |
+| Free key hitting pro endpoint | 403 error |
 
 ### 4.5 Pagination
 
-Cursor-paginated endpoints (search, leaderboard, activity) return `{ data, pagination: { next_cursor, has_more, limit } }`. The SDK user manually passes `cursor` for next pages:
+Cursor-paginated endpoints (search, leaderboard, activity) return `{ data, pagination: { next_cursor, has_more, limit } }`. The API uses `snake_case` field names; the generated SDK may camelCase them (e.g., `nextCursor`, `hasMore`) depending on Speakeasy's naming config. The exact field casing is verified after generation.
 
 ```typescript
 let cursor: string | undefined
 do {
   const page = await oracle.agents.search({ q: 'lucid', cursor })
   for (const agent of page.data) { /* ... */ }
-  cursor = page.pagination.nextCursor ?? undefined
+  // Field name may be next_cursor or nextCursor depending on generation output
+  cursor = page.pagination.next_cursor ?? undefined
 } while (cursor)
 ```
 
@@ -304,8 +304,11 @@ Auto-pagination via `x-speakeasy-pagination` can be added in a future overlay up
 
 ### 5.1 What Gets Built
 
+**Prerequisite:** The SDK assumes the Oracle API's OpenAPI spec is complete and validated. Any missing schema fidelity (weak response types, inconsistent security annotations, missing examples) is a blocker, not "future cleanup." The spec export from Plan 3B covers all 15 endpoints with TypeBox schemas.
+
 **In the oracle monorepo (`lucid-agent-oracle`):**
-1. No changes needed — `export-openapi.ts` already exports JSON, and the overlay overrides the server URL
+1. Verify the exported OpenAPI spec has complete schemas for all 15 endpoints (done in Plan 3B)
+2. No other changes needed — `export-openapi.ts` exports JSON, overlay overrides the server URL
 
 **In the SDK repo (`oracle-sdk-node`):**
 1. Create the repo structure: `openapi/`, `.speakeasy/`, `LICENSE`, `.gitignore`
@@ -328,11 +331,29 @@ Auto-pagination via `x-speakeasy-pagination` can be added in a future overlay up
 
 ### 5.3 Testing Strategy
 
-Speakeasy generates the SDK with its own test scaffolding. For v0.1.0:
-- Verify the SDK compiles (`tsc --noEmit`)
-- Verify all 15 endpoints are present as typed methods
-- Verify resource grouping matches spec (feeds/agents/protocols/reports)
-- Manual smoke test against running oracle API
+Speakeasy generates the SDK with its own test scaffolding. For v0.1.0, the test suite must cover more than compilation:
+
+**Compile-time checks:**
+- `tsc --noEmit` passes
+- All 15 endpoints present as typed methods on their resource groups (feeds/agents/protocols/reports)
+
+**Smoke tests (per resource group, against running oracle API):**
+- `feeds.list()` — returns feed array with expected shape
+- `agents.search({ q: 'test' })` — returns paginated response
+- `protocols.list()` — returns protocol array
+- `reports.latest()` — returns report or null
+
+**Auth behavior:**
+- Anonymous client can call free-tier endpoints successfully
+- Anonymous client gets 403 on pro-tier endpoint (`agents.metrics`)
+- Authenticated client can call pro-tier endpoints
+
+**Pagination round-trip:**
+- `agents.leaderboard({ limit: 1 })` → get cursor → pass cursor → get next page
+
+**Error contract:**
+- 404 on `agents.get({ id: 'nonexistent' })` — error has status code + problem details
+- 400 on `agents.search({})` (missing required param)
 
 ---
 
@@ -348,3 +369,11 @@ Speakeasy generates the SDK with its own test scaffolding. For v0.1.0:
 | Version in path (`/v1/`) not server variable | Speakeasy recommendation; stable routing |
 | Manual pagination for v0.1.0 | Simple, matches API contract; auto-pagination deferred |
 | Apache-2.0 license | Standard for open-source SDKs |
+
+### 6.1 Method Name Stability
+
+The SDK's public method names (e.g., `oracle.feeds.list()`) are stable as long as:
+- The API path stays the same, OR
+- The overlay target is updated when a path changes
+
+If a path is renamed or removed in the API without an overlay update, Speakeasy generation will either produce a broken overlay (if the target doesn't match) or silently drop the method. The overlay must be kept in sync with the API spec on every SDK release. CI validation (deferred) should catch this automatically.
