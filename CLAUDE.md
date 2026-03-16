@@ -149,3 +149,5 @@ All in `services/redis.ts` → `keys` object. Leaderboard uses versioned namespa
 - Per-phase plans: `docs/plans/2026-03-12-agent-economy-oracle-plan{N}-*.md`
 - Plan 3A v2 spec: `docs/superpowers/specs/2026-03-13-plan3a-api-product-layer-design.md`
 - Plan 3A v2 plan: `docs/superpowers/plans/2026-03-13-plan3a-api-product-layer.md`
+- Plan 3D spec: `docs/superpowers/specs/2026-03-15-plan3d-oracle-dashboard-design.md`
+- Plan 3D plan: `docs/superpowers/plans/2026-03-15-plan3d-oracle-dashboard.md`
