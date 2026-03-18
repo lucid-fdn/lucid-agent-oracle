@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  CURSOR_SECRET: ci-test-secret
+  STREAM_TOKEN_SECRET: ci-stream-test-secret
+  OTEL_ENABLED: 'false'
+
+jobs:
+  lint-and-typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+        env:
+          WEBHOOK_SECRET_KEY: 'ci-webhook-secret-key-32chars!!!'
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build --target api -t oracle-api:ci .
+
+      - name: Build Worker image
+        run: docker build --target worker -t oracle-worker:ci .
+
+      - name: Build Webhook Worker image
+        run: docker build --target webhook-worker -t oracle-webhook-worker:ci .
+
+      - name: Verify API image starts
+        run: |
+          docker run -d --name api-check \
+            -e CURSOR_SECRET=ci-test \
+            -e STREAM_TOKEN_SECRET=ci-test \
+            -e OTEL_ENABLED=false \
+            -p 4040:4040 \
+            oracle-api:ci
+          sleep 5
+          curl -sf http://localhost:4040/health | grep -q '"status":"ok"'
+          docker stop api-check
