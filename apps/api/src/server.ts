@@ -26,6 +26,14 @@ import { registerFeedRoutes } from './routes/feeds.js'
 import { registerReportRoutes } from './routes/reports.js'
 import { LucidResolver } from './services/lucid-resolver.js'
 import { initRedis, closeRedis, loadLeaderboardVersion } from './services/redis.js'
+import { EventBus } from './services/event-bus.js'
+import { registerStreamRoutes } from './routes/stream.js'
+import { registerAlertRoutes } from './routes/alerts.js'
+import { StreamTokenResponse, StreamQuery } from './schemas/stream.js'
+import {
+  CreateAlertBody, CreateAlertResponse, AlertListResponse,
+  AlertSubscription, AlertIdParams,
+} from './schemas/alerts.js'
 import { authPlugin } from './plugins/auth.js'
 import cachePlugin from './plugins/cache.js'
 import rateLimitPlugin from './plugins/rate-limit.js'
@@ -52,6 +60,8 @@ await app.register(swagger, {
       { name: 'protocols', description: 'Protocol registry and metrics' },
       { name: 'feeds', description: 'Oracle economic feeds' },
       { name: 'reports', description: 'Signed attestation reports' },
+      { name: 'streaming', description: 'SSE streaming and stream tokens' },
+      { name: 'alerts', description: 'Webhook alert subscriptions' },
     ],
     components: {
       securitySchemes: {
@@ -73,6 +83,13 @@ app.addSchema(CursorQuery)
 app.addSchema(CursorMeta)
 app.addSchema(AgentIdParams)
 app.addSchema(ProtocolIdParams)
+app.addSchema(StreamTokenResponse)
+app.addSchema(StreamQuery)
+app.addSchema(CreateAlertBody)
+app.addSchema(CreateAlertResponse)
+app.addSchema(AlertListResponse)
+app.addSchema(AlertSubscription)
+app.addSchema(AlertIdParams)
 
 // Global error handler — ensures ALL errors are RFC 9457 Problem Details
 registerGlobalErrorHandler(app)
@@ -97,6 +114,9 @@ if (redis) {
 } else {
   app.log.warn('REDIS_URL not set — running without Redis cache')
 }
+
+// Plan 3E: EventBus (dual fanout to Pub/Sub for SSE + Streams for webhooks)
+const eventBus = new EventBus()
 
 app.get('/health', async () => ({
   status: 'ok',
@@ -135,7 +155,27 @@ if (clickhouseUrl && redpandaBrokers) {
   // 4. Start consumer
   await consumer.subscribe([TOPICS.INDEX_UPDATES])
   consumer.runRaw(async (_key, value) => {
-    if (value) handleIndexUpdate(value)
+    if (value) {
+      handleIndexUpdate(value)
+      // Plan 3E: Fan out to SSE + webhook queue
+      try {
+        const row = JSON.parse(value) as Record<string, unknown>
+        void eventBus.emit({
+          channel: 'feeds',
+          payload: {
+            feedId: row.feed_id,
+            value: Number(row.value),
+            confidence: row.confidence,
+            freshness: row.freshness_ms,
+            revision: row.revision,
+          },
+          sse: true,
+          webhook: true,
+        })
+      } catch {
+        // Skip malformed events
+      }
+    }
   }).catch((err) => {
     app.log.error('INDEX_UPDATES consumer error:', err)
   })
@@ -238,6 +278,11 @@ if (databaseUrl && redpandaBrokers) {
   registerFeedRoutes(app, clickhouse)
   registerReportRoutes(app, clickhouse)
   app.log.info('Agent, protocol, feed, and report routes mounted')
+
+  // Plan 3E: SSE streaming + webhook alert routes
+  registerStreamRoutes(app, eventBus)
+  registerAlertRoutes(app, client)
+  app.log.info('Stream and alert routes mounted')
 
   // Plan 4B: Self-registration + admin endpoints
   registerIdentityRoutes(app, client, resolverProducer)
