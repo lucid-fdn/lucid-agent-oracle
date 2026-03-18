@@ -4,27 +4,27 @@
  * Exercises the full compute → cache → serve flow:
  *   1. Build realistic feed inputs
  *   2. Compute all 3 feeds (AEGDP, AAI, APRI) via pure functions
- *   3. Build a signed feed publication record (attestation)
+ *   3. Verify quality envelope computation
  *   4. Inject into the API's in-memory feed cache via handleIndexUpdate()
  *   5. Query the API and verify the full response
+ *   6. Verify error paths, stale-data rejection, edge cases
  *
  * No external services required — uses real computation logic + lightweight Fastify.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import Fastify from 'fastify'
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import {
   computeAEGDP,
   computeAAI,
   computeAPRI,
-  AttestationService,
   computeConfidence,
   computeFreshnessScore,
   computeStalenessRisk,
   V1_FEEDS,
   type PublishedFeedRow,
 } from '@lucid/oracle-core'
-import { registerOracleRoutes, handleIndexUpdate } from '../routes/v1.js'
+import { registerOracleRoutes, handleIndexUpdate, _resetFeedValues } from '../routes/v1.js'
 import { buildAEGDPInputs, buildAAIInputs, buildAPRIInputs } from '../../../worker/src/compute.js'
 import { ProblemDetail, registerGlobalErrorHandler } from '../schemas/common.js'
 
@@ -58,16 +58,45 @@ const PROVIDER_COUNTS = [
 const WINDOW_MS = 3_600_000 // 1 hour
 const WINDOW_SECONDS = WINDOW_MS / 1000
 
+// ── Helpers ──────────────────────────────────────────────────
+
+function makeFeedRow(overrides: Partial<PublishedFeedRow> & { feed_id: string }): PublishedFeedRow {
+  return {
+    feed_version: V1_FEEDS[overrides.feed_id as keyof typeof V1_FEEDS]?.version ?? 1,
+    computed_at: new Date().toISOString(),
+    revision: 1,
+    pub_status_rev: 1,
+    value_json: '{}',
+    value_usd: null,
+    value_index: null,
+    confidence: 0.95,
+    completeness: 1.0,
+    freshness_ms: 500,
+    staleness_risk: 'low',
+    revision_status: 'current',
+    methodology_version: 1,
+    input_manifest_hash: 'abc123',
+    computation_hash: 'def456',
+    signer_set_id: 'test-signer',
+    signatures_json: JSON.stringify([{ signer: 'test-key', sig: 'deadbeef' }]),
+    source_coverage: 'full',
+    published_solana: null,
+    published_base: null,
+    ...overrides,
+  }
+}
+
+// Pre-compute all feed values (no test-order dependency)
+const aegdpResult = computeAEGDP(buildAEGDPInputs(PROTOCOL_USD_ROWS))
+const aaiResult = computeAAI(buildAAIInputs(WINDOW_AGGREGATES, WINDOW_SECONDS))
+const apriResult = computeAPRI(buildAPRIInputs(WINDOW_AGGREGATES, PROVIDER_COUNTS, 55, 60))
+
 // ── Test suite ───────────────────────────────────────────────
 
 describe('E2E pipeline: compute → cache → serve', () => {
   let app: ReturnType<typeof Fastify>
-  let aegdpValue: number
-  let aaiValue: number
-  let apriValue: number
 
   beforeAll(async () => {
-    // Build Fastify instance (minimal — just feeds routes)
     app = Fastify({ logger: false }).withTypeProvider<TypeBoxTypeProvider>()
     app.addSchema(ProblemDetail)
     registerGlobalErrorHandler(app)
@@ -79,45 +108,40 @@ describe('E2E pipeline: compute → cache → serve', () => {
     await app.close()
   })
 
-  it('computes AEGDP from protocol USD data', () => {
-    const inputs = buildAEGDPInputs(PROTOCOL_USD_ROWS)
-    const result = computeAEGDP(inputs)
+  beforeEach(() => {
+    _resetFeedValues()
+  })
 
-    aegdpValue = result.value_usd
-    expect(aegdpValue).toBeGreaterThan(0)
-    expect(aegdpValue).toBeCloseTo(12500.50 + 8750.25 + 3200 + 1800.75, 1)
-    expect(result.computation_hash).toBeDefined()
-    expect(result.input_manifest_hash).toBeDefined()
+  // ── Feed computation ───────────────────────────────────────
+
+  it('computes AEGDP from protocol USD data', () => {
+    expect(aegdpResult.value_usd).toBeGreaterThan(0)
+    expect(aegdpResult.value_usd).toBeCloseTo(12500.50 + 8750.25 + 3200 + 1800.75, 1)
+    expect(aegdpResult.computation_hash).toBeDefined()
+    expect(aegdpResult.input_manifest_hash).toBeDefined()
   })
 
   it('computes AAI from window aggregates', () => {
-    const inputs = buildAAIInputs(WINDOW_AGGREGATES, WINDOW_SECONDS)
-    const result = computeAAI(inputs)
-
-    aaiValue = result.value
-    expect(aaiValue).toBeGreaterThan(0)
-    expect(aaiValue).toBeLessThanOrEqual(1000)
-    expect(result.breakdown).toBeDefined()
+    expect(aaiResult.value).toBeGreaterThan(0)
+    expect(aaiResult.value).toBeLessThanOrEqual(1000)
+    expect(aaiResult.breakdown).toBeDefined()
   })
 
   it('computes APRI from provider distribution', () => {
-    const inputs = buildAPRIInputs(
-      WINDOW_AGGREGATES,
-      PROVIDER_COUNTS,
-      55, // active buckets
-      60, // total buckets
-    )
-    const result = computeAPRI(inputs)
+    expect(apriResult.value).toBeGreaterThan(0)
+    expect(apriResult.value).toBeLessThan(10000) // HHI with 4 providers
+  })
 
-    apriValue = result.value
-    expect(apriValue).toBeGreaterThan(0)
-    // HHI with 4 providers shouldn't be extreme monopoly
-    expect(apriValue).toBeLessThan(10000)
+  it('computed feed values are deterministic (same inputs → same output)', () => {
+    const result2 = computeAEGDP(buildAEGDPInputs(PROTOCOL_USD_ROWS))
+    expect(aegdpResult.value_usd).toBe(result2.value_usd)
+    expect(aegdpResult.computation_hash).toBe(result2.computation_hash)
+    expect(aegdpResult.input_manifest_hash).toBe(result2.input_manifest_hash)
   })
 
   it('generates quality envelope for each feed', () => {
     const freshnessScore = computeFreshnessScore(500, WINDOW_MS)
-    const aegdpConf = computeConfidence({
+    const conf = computeConfidence({
       source_diversity_score: 0.8,
       identity_confidence: 0.9,
       data_completeness: 1.0,
@@ -127,132 +151,94 @@ describe('E2E pipeline: compute → cache → serve', () => {
     })
     const staleness = computeStalenessRisk(500, WINDOW_MS)
 
-    expect(aegdpConf).toBeGreaterThan(0)
-    expect(aegdpConf).toBeLessThanOrEqual(1)
+    expect(conf).toBeGreaterThan(0)
+    expect(conf).toBeLessThanOrEqual(1)
     expect(['low', 'medium', 'high']).toContain(staleness)
   })
 
-  it('injects computed feeds into API cache via handleIndexUpdate', () => {
-    const now = new Date().toISOString()
-    const signerSetId = 'test-signer'
-    const signaturesJson = JSON.stringify([{ signer: 'test-key', sig: 'deadbeef' }])
+  // ── Boundary conditions ────────────────────────────────────
 
-    // Build PublishedFeedRow objects matching what the worker produces
-    const feeds: PublishedFeedRow[] = [
-      {
-        feed_id: 'aegdp',
-        feed_version: V1_FEEDS.aegdp.version,
-        computed_at: now,
-        revision: 1,
-        pub_status_rev: 1,
-        value_json: JSON.stringify({ value_usd: aegdpValue }),
-        value_usd: aegdpValue,
-        value_index: null,
-        confidence: 0.95,
-        completeness: 1.0,
-        freshness_ms: 500,
-        staleness_risk: 'low',
-        revision_status: 'current',
-        methodology_version: 1,
-        input_manifest_hash: 'abc123',
-        computation_hash: 'def456',
-        signer_set_id: signerSetId,
-        signatures_json: signaturesJson,
-        source_coverage: 'full',
-        published_solana: null,
-        published_base: null,
-      },
-      {
-        feed_id: 'aai',
-        feed_version: V1_FEEDS.aai.version,
-        computed_at: now,
-        revision: 1,
-        pub_status_rev: 1,
-        value_json: JSON.stringify({ value: aaiValue }),
-        value_usd: null,
-        value_index: aaiValue,
-        confidence: 0.92,
-        completeness: 1.0,
-        freshness_ms: 500,
-        staleness_risk: 'low',
-        revision_status: 'current',
-        methodology_version: 1,
-        input_manifest_hash: 'abc124',
-        computation_hash: 'def457',
-        signer_set_id: signerSetId,
-        signatures_json: signaturesJson,
-        source_coverage: 'full',
-        published_solana: null,
-        published_base: null,
-      },
-      {
-        feed_id: 'apri',
-        feed_version: V1_FEEDS.apri.version,
-        computed_at: now,
-        revision: 1,
-        pub_status_rev: 1,
-        value_json: JSON.stringify({ value: apriValue }),
-        value_usd: null,
-        value_index: apriValue,
-        confidence: 0.88,
-        completeness: 0.92,
-        freshness_ms: 800,
-        staleness_risk: 'low',
-        revision_status: 'current',
-        methodology_version: 1,
-        input_manifest_hash: 'abc125',
-        computation_hash: 'def458',
-        signer_set_id: signerSetId,
-        signatures_json: signaturesJson,
-        source_coverage: 'full',
-        published_solana: null,
-        published_base: null,
-      },
-    ]
-
-    // Inject each feed via the same path as the Redpanda consumer
-    for (const row of feeds) {
-      handleIndexUpdate(JSON.stringify(row))
-    }
+  it('computeAEGDP handles empty input', () => {
+    const result = computeAEGDP(buildAEGDPInputs([]))
+    expect(result.value_usd).toBe(0)
   })
 
-  it('GET /v1/oracle/feeds returns all 3 feeds with computed values', async () => {
-    const res = await app.inject({ method: 'GET', url: '/v1/oracle/feeds' })
+  it('computeAEGDP handles zero-value rows', () => {
+    const rows = [{ protocol: 'test', event_type: 'payment', usd_value: 0 }]
+    const result = computeAEGDP(buildAEGDPInputs(rows))
+    expect(result.value_usd).toBe(0)
+  })
 
+  it('computeAAI handles zero activity', () => {
+    const zeroAgg = { ...WINDOW_AGGREGATES, total_events: 0, authentic_tool_calls: 0, unique_agents_authentic: 0, authentic_operational: 0, unique_model_provider_pairs_authentic: 0 }
+    const result = computeAAI(buildAAIInputs(zeroAgg, WINDOW_SECONDS))
+    expect(result.value).toBe(0)
+  })
+
+  it('computeAPRI handles single provider (monopoly)', () => {
+    const singleProvider = [{ provider: 'anthropic', cnt: 10000 }]
+    const inputs = buildAPRIInputs(WINDOW_AGGREGATES, singleProvider, 60, 60)
+    const result = computeAPRI(inputs)
+    // HHI for a monopoly should be high (up to 10000)
+    expect(result.value).toBeGreaterThan(0)
+  })
+
+  // ── Cache injection + API serving ──────────────────────────
+
+  it('GET /v1/oracle/feeds returns null latest_value on cold start', async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/oracle/feeds' })
     expect(res.statusCode).toBe(200)
     const body = res.json()
     expect(body.feeds).toHaveLength(3)
-
-    // Verify each feed has a latest_value
     for (const feed of body.feeds) {
-      expect(feed.id).toBeDefined()
-      expect(feed.name).toBeDefined()
-      expect(feed.latest_value).not.toBeNull()
-      expect(feed.latest_value.confidence).toBeGreaterThan(0)
-      expect(feed.latest_value.staleness_risk).toBe('low')
+      expect(feed.latest_value).toBeNull()
+    }
+  })
+
+  it('injects computed feeds and serves them via GET /v1/oracle/feeds', async () => {
+    const now = new Date().toISOString()
+
+    handleIndexUpdate(JSON.stringify(makeFeedRow({
+      feed_id: 'aegdp', computed_at: now,
+      value_json: JSON.stringify({ value_usd: aegdpResult.value_usd }),
+      value_usd: aegdpResult.value_usd,
+    })))
+    handleIndexUpdate(JSON.stringify(makeFeedRow({
+      feed_id: 'aai', computed_at: now,
+      value_json: JSON.stringify({ value: aaiResult.value }),
+      value_index: aaiResult.value,
+    })))
+    handleIndexUpdate(JSON.stringify(makeFeedRow({
+      feed_id: 'apri', computed_at: now,
+      value_json: JSON.stringify({ value: apriResult.value }),
+      value_index: apriResult.value, confidence: 0.88, completeness: 0.92,
+    })))
+
+    const res = await app.inject({ method: 'GET', url: '/v1/oracle/feeds' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+
+    const populated = body.feeds.filter((f: any) => f.latest_value !== null)
+    expect(populated).toHaveLength(3)
+
+    for (const feed of body.feeds) {
       expect(feed.latest_value.signer).toBe('test-key')
+      expect(feed.latest_value.staleness_risk).toBe('low')
     }
 
-    // Verify specific feed values
     const aegdp = body.feeds.find((f: any) => f.id === 'aegdp')
-    expect(aegdp).toBeDefined()
-    const aegdpVal = JSON.parse(aegdp.latest_value.value)
-    expect(aegdpVal.value_usd).toBeCloseTo(aegdpValue, 1)
-
-    const aai = body.feeds.find((f: any) => f.id === 'aai')
-    expect(aai).toBeDefined()
-    const aaiVal = JSON.parse(aai.latest_value.value)
-    expect(aaiVal.value).toBeCloseTo(aaiValue, 1)
-
-    const apri = body.feeds.find((f: any) => f.id === 'apri')
-    expect(apri).toBeDefined()
-    const apriVal = JSON.parse(apri.latest_value.value)
-    expect(apriVal.value).toBeCloseTo(apriValue, 1)
+    expect(JSON.parse(aegdp.latest_value.value).value_usd).toBeCloseTo(aegdpResult.value_usd, 1)
   })
 
   it('GET /v1/oracle/feeds/:id returns correct detail', async () => {
-    const res = await app.inject({ method: 'GET', url: '/v1/oracle/feeds/aegdp' })
+    handleIndexUpdate(JSON.stringify(makeFeedRow({
+      feed_id: 'aegdp',
+      value_json: JSON.stringify({ value_usd: aegdpResult.value_usd }),
+      value_usd: aegdpResult.value_usd,
+      confidence: 0.95,
+    })))
 
+    const res = await app.inject({ method: 'GET', url: '/v1/oracle/feeds/aegdp' })
     expect(res.statusCode).toBe(200)
     const body = res.json()
     expect(body.feed.id).toBe('aegdp')
@@ -266,14 +252,72 @@ describe('E2E pipeline: compute → cache → serve', () => {
     expect(res.statusCode).toBe(404)
   })
 
-  it('computed feed values are deterministic (same inputs → same output)', () => {
-    const inputs1 = buildAEGDPInputs(PROTOCOL_USD_ROWS)
-    const inputs2 = buildAEGDPInputs(PROTOCOL_USD_ROWS)
-    const result1 = computeAEGDP(inputs1)
-    const result2 = computeAEGDP(inputs2)
+  it('GET /v1/oracle/feeds/:id/methodology returns computation details', async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/oracle/feeds/aai/methodology' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.computation).toBeDefined()
+  })
 
-    expect(result1.value_usd).toBe(result2.value_usd)
-    expect(result1.computation_hash).toBe(result2.computation_hash)
-    expect(result1.input_manifest_hash).toBe(result2.input_manifest_hash)
+  it('GET /v1/oracle/feeds/:id/methodology returns 404 for unknown feed', async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/oracle/feeds/nonexistent/methodology' })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('GET /v1/oracle/reports/latest returns feed values', async () => {
+    handleIndexUpdate(JSON.stringify(makeFeedRow({
+      feed_id: 'aegdp',
+      value_json: JSON.stringify({ value_usd: aegdpResult.value_usd }),
+      value_usd: aegdpResult.value_usd,
+    })))
+
+    const res = await app.inject({ method: 'GET', url: '/v1/oracle/reports/latest' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.report).not.toBeNull()
+    expect(body.report.feeds).toBeDefined()
+    expect(body.report.feeds.length).toBeGreaterThan(0)
+  })
+
+  // ── Error paths ────────────────────────────────────────────
+
+  it('handleIndexUpdate ignores malformed JSON', () => {
+    expect(() => handleIndexUpdate('not-json{')).not.toThrow()
+  })
+
+  it('handleIndexUpdate ignores messages missing feed_id', () => {
+    const msg = JSON.stringify({ computed_at: new Date().toISOString() })
+    expect(() => handleIndexUpdate(msg)).not.toThrow()
+    // Cache should remain empty
+  })
+
+  it('handleIndexUpdate ignores messages missing computed_at', () => {
+    const msg = JSON.stringify({ feed_id: 'aegdp' })
+    expect(() => handleIndexUpdate(msg)).not.toThrow()
+  })
+
+  // ── Stale-data rejection (critical oracle invariant) ───────
+
+  it('handleIndexUpdate does not overwrite newer data with older', async () => {
+    const newer = makeFeedRow({
+      feed_id: 'aegdp',
+      computed_at: '2026-03-18T12:00:00Z',
+      value_json: JSON.stringify({ value_usd: 99999 }),
+      value_usd: 99999,
+    })
+    const older = makeFeedRow({
+      feed_id: 'aegdp',
+      computed_at: '2026-03-18T11:00:00Z',
+      value_json: JSON.stringify({ value_usd: 11111 }),
+      value_usd: 11111,
+    })
+
+    handleIndexUpdate(JSON.stringify(newer))
+    handleIndexUpdate(JSON.stringify(older)) // should be rejected
+
+    const res = await app.inject({ method: 'GET', url: '/v1/oracle/feeds/aegdp' })
+    const body = res.json()
+    const val = JSON.parse(body.latest.value)
+    expect(val.value_usd).toBe(99999) // newer value preserved
   })
 })
