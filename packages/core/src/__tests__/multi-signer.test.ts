@@ -33,8 +33,8 @@ describe('SignerSetRegistry', () => {
   it('registers and retrieves a signer set', () => {
     const set: SignerSet = { id: 'ss_test', quorum: 2, signers: ['pub1', 'pub2', 'pub3'] }
     registry.register(set)
-    expect(registry.get('ss_test')).toEqual(set)
     expect(registry.has('ss_test')).toBe(true)
+    expect(registry.get('ss_test')!.quorum).toBe(2)
   })
 
   it('returns undefined for unknown set', () => {
@@ -48,6 +48,31 @@ describe('SignerSetRegistry', () => {
 
   it('rejects quorum > signer count', () => {
     expect(() => registry.register({ id: 'bad', quorum: 3, signers: ['pub1', 'pub2'] })).toThrow('exceeds signer count')
+  })
+
+  it('rejects duplicate signers in a set', () => {
+    expect(() => registry.register({ id: 'bad', quorum: 1, signers: ['pub1', 'pub1'] })).toThrow('Duplicate signers')
+  })
+
+  it('unregister removes a set', () => {
+    registry.register({ id: 'ss_rm', quorum: 1, signers: ['pub1'] })
+    expect(registry.unregister('ss_rm')).toBe(true)
+    expect(registry.has('ss_rm')).toBe(false)
+  })
+
+  it('clear removes all sets', () => {
+    registry.register({ id: 'a', quorum: 1, signers: ['pub1'] })
+    registry.register({ id: 'b', quorum: 1, signers: ['pub2'] })
+    registry.clear()
+    expect(registry.has('a')).toBe(false)
+    expect(registry.has('b')).toBe(false)
+  })
+
+  it('defensively copies signers array', () => {
+    const signers = ['pub1', 'pub2']
+    registry.register({ id: 'ss_copy', quorum: 1, signers })
+    signers.push('pub3') // mutate original
+    expect(registry.get('ss_copy')!.signers).toHaveLength(2) // unchanged
   })
 })
 
@@ -99,6 +124,13 @@ describe('MultiSignerAttestationService', () => {
     })).toThrow('At least one private key')
   })
 
+  it('throws on duplicate private keys', () => {
+    expect(() => new MultiSignerAttestationService({
+      privateKeysHex: [KEY_1, KEY_1],
+      signerSetId: 'ss_dup',
+    })).toThrow('Duplicate private keys')
+  })
+
   it('signatures are deterministic', () => {
     const multi = new MultiSignerAttestationService({
       privateKeysHex: [KEY_1, KEY_2],
@@ -117,6 +149,8 @@ describe('Quorum verification', () => {
   let multi: MultiSignerAttestationService
 
   beforeEach(() => {
+    signerSetRegistry.clear()
+
     multi = new MultiSignerAttestationService({
       privateKeysHex: [KEY_1, KEY_2, KEY_3],
       signerSetId: 'ss_quorum_test',
@@ -175,6 +209,17 @@ describe('Quorum verification', () => {
     expect(result.validCount).toBe(0)
   })
 
+  it('SECURITY: duplicate signatures from same signer do not inflate quorum', () => {
+    const envelope = multi.signReport(PAYLOAD)
+    // Keep only one signature but duplicate it 5 times
+    const singleSig = envelope.signatures[0]
+    envelope.signatures = Array(5).fill(singleSig)
+    const result = multi.verifyReport(envelope)
+    // Only 1 unique valid signer, below quorum of 2
+    expect(result.validCount).toBe(1)
+    expect(result.valid).toBe(false)
+  })
+
   it('invalid: unknown signer set', () => {
     const envelope = multi.signReport(PAYLOAD)
     envelope.signer_set_id = 'ss_unknown'
@@ -195,11 +240,17 @@ describe('Quorum verification', () => {
     expect(result.validCount).toBe(0)
   })
 
+  it('rejects malformed hex keys', () => {
+    expect(() => new MultiSignerAttestationService({
+      privateKeysHex: ['zzzz' + '0'.repeat(60)],
+      signerSetId: 'ss_bad',
+    })).toThrow('Invalid hex')
+  })
+
   it('backward compatible: single-signer envelope still works', () => {
     const single = new AttestationService({ privateKeyHex: KEY_1 })
     const envelope = single.signReport(PAYLOAD)
 
-    // Register a set matching the single signer
     signerSetRegistry.register({
       id: 'ss_lucid_v1',
       quorum: 1,
@@ -209,6 +260,13 @@ describe('Quorum verification', () => {
     const result = multi.verifyReport(envelope)
     expect(result.valid).toBe(true)
     expect(result.validCount).toBe(1)
+  })
+
+  it('empty payload values compute deterministically', () => {
+    const emptyPayload: ReportPayload = { ...PAYLOAD, values: {} }
+    const env1 = multi.signReport(emptyPayload)
+    const env2 = multi.signReport(emptyPayload)
+    expect(env1.signatures[0].sig).toBe(env2.signatures[0].sig)
   })
 })
 

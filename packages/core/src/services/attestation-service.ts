@@ -4,6 +4,7 @@ import { canonicalStringify } from '../utils/canonical-json.js'
 
 // @noble/ed25519 v2 requires sha512Sync to be set in Node.js environments.
 // Wire it up to Node's built-in crypto so all operations remain synchronous.
+// NOTE: This is the only module that should set sha512Sync — do not set it elsewhere.
 ed.etc.sha512Sync = (...msgs: Uint8Array[]): Uint8Array => {
   const h = createHash('sha512')
   for (const m of msgs) h.update(m)
@@ -46,22 +47,46 @@ export interface SignerSet {
   signers: string[]
 }
 
+/** Internal representation with Set for O(1) lookup */
+interface RegisteredSignerSet extends SignerSet {
+  _signerLookup: Set<string>
+}
+
 /** Registry of known signer sets for verification. */
 export class SignerSetRegistry {
-  private sets = new Map<string, SignerSet>()
+  private sets = new Map<string, RegisteredSignerSet>()
 
   register(set: SignerSet): void {
     if (set.quorum < 1) throw new Error(`Quorum must be >= 1, got ${set.quorum}`)
     if (set.quorum > set.signers.length) throw new Error(`Quorum ${set.quorum} exceeds signer count ${set.signers.length}`)
-    this.sets.set(set.id, set)
+    const uniqueSigners = new Set(set.signers)
+    if (uniqueSigners.size !== set.signers.length) {
+      throw new Error(`Duplicate signers in set ${set.id}`)
+    }
+    // Defensive copy + O(1) lookup set
+    this.sets.set(set.id, {
+      ...set,
+      signers: [...set.signers],
+      _signerLookup: uniqueSigners,
+    })
   }
 
-  get(id: string): SignerSet | undefined {
+  get(id: string): RegisteredSignerSet | undefined {
     return this.sets.get(id)
   }
 
   has(id: string): boolean {
     return this.sets.has(id)
+  }
+
+  /** Remove a signer set (for testing or rotation). */
+  unregister(id: string): boolean {
+    return this.sets.delete(id)
+  }
+
+  /** Remove all registered sets (for testing). */
+  clear(): void {
+    this.sets.clear()
   }
 }
 
@@ -92,16 +117,20 @@ export class AttestationService {
         this.privateKey = ed.utils.randomPrivateKey()
       }
     }
-    // @noble/ed25519 v2+ with sha512Sync is always synchronous.
     const pubBytes = ed.getPublicKey(this.privateKey)
     this.publicKeyHex = bytesToHex(pubBytes)
   }
 
+  /** Sign raw bytes and return the signature. */
+  signBytes(msgBytes: Uint8Array): Uint8Array {
+    return ed.sign(msgBytes, this.privateKey)
+  }
+
   /** Sign a report payload and return the full envelope */
   signReport(payload: ReportPayload): ReportEnvelope {
-    const message = this.canonicalize(payload)
+    const message = canonicalStringify(payload)
     const msgBytes = new TextEncoder().encode(message)
-    const sig = ed.sign(msgBytes, this.privateKey)
+    const sig = this.signBytes(msgBytes)
 
     return {
       ...payload,
@@ -117,7 +146,7 @@ export class AttestationService {
   verifyReport(envelope: ReportEnvelope): boolean {
     if (envelope.signatures.length === 0) return false
     const { signer_set_id, signatures, ...payload } = envelope
-    const message = this.canonicalize(payload as ReportPayload)
+    const message = canonicalStringify(payload as ReportPayload)
     const msgBytes = new TextEncoder().encode(message)
 
     for (const { signer, sig } of signatures) {
@@ -130,10 +159,6 @@ export class AttestationService {
   /** Get the hex-encoded public key */
   getPublicKey(): string {
     return this.publicKeyHex
-  }
-
-  private canonicalize(obj: unknown): string {
-    return canonicalStringify(obj)
   }
 }
 
@@ -149,20 +174,27 @@ interface MultiSignerConfig {
 /**
  * Multi-signer attestation service.
  * Signs reports with N keys and produces N signatures in the envelope.
- * Verifies against the signer set's quorum threshold.
+ * Verifies against the signer set's quorum threshold with deduplication.
  */
 export class MultiSignerAttestationService {
-  private readonly signers: AttestationService[]
+  private readonly keys: Array<{ privateKey: Uint8Array; publicKeyHex: string }>
   private readonly signerSetId: string
 
   constructor(config: MultiSignerConfig) {
     if (config.privateKeysHex.length === 0) {
       throw new Error('At least one private key is required')
     }
+    // C2 fix: reject duplicate private keys
+    const uniqueKeys = new Set(config.privateKeysHex)
+    if (uniqueKeys.size !== config.privateKeysHex.length) {
+      throw new Error('Duplicate private keys detected')
+    }
     this.signerSetId = config.signerSetId
-    this.signers = config.privateKeysHex.map(
-      (hex) => new AttestationService({ privateKeyHex: hex }),
-    )
+    this.keys = config.privateKeysHex.map((hex) => {
+      const privateKey = hexToBytes(hex)
+      const publicKeyHex = bytesToHex(ed.getPublicKey(privateKey))
+      return { privateKey, publicKeyHex }
+    })
   }
 
   /** Sign a report with all configured signers. */
@@ -170,13 +202,10 @@ export class MultiSignerAttestationService {
     const message = canonicalStringify(payload)
     const msgBytes = new TextEncoder().encode(message)
 
-    const signatures = this.signers.map((signer) => {
-      const sig = ed.sign(msgBytes, (signer as any).privateKey)
-      return {
-        signer: signer.getPublicKey(),
-        sig: bytesToHex(sig),
-      }
-    })
+    const signatures = this.keys.map(({ privateKey, publicKeyHex }) => ({
+      signer: publicKeyHex,
+      sig: bytesToHex(ed.sign(msgBytes, privateKey)),
+    }))
 
     return {
       ...payload,
@@ -187,7 +216,8 @@ export class MultiSignerAttestationService {
 
   /**
    * Verify a report envelope against the registered signer set.
-   * Returns true if at least `quorum` signatures are valid AND from authorized signers.
+   * Returns true if at least `quorum` UNIQUE valid signatures are from authorized signers.
+   * C1 fix: deduplicates by signer public key to prevent replay of same signature.
    */
   verifyReport(envelope: ReportEnvelope): { valid: boolean; validCount: number; quorum: number } {
     const set = signerSetRegistry.get(envelope.signer_set_id)
@@ -200,11 +230,17 @@ export class MultiSignerAttestationService {
     const msgBytes = new TextEncoder().encode(message)
 
     let validCount = 0
+    const seen = new Set<string>()
     for (const { signer, sig } of signatures) {
-      // Must be an authorized signer
-      if (!set.signers.includes(signer)) continue
+      // Deduplicate: each signer can only contribute once
+      if (seen.has(signer)) continue
+      // Must be an authorized signer (O(1) lookup)
+      if (!set._signerLookup.has(signer)) continue
       const isValid = ed.verify(hexToBytes(sig), msgBytes, hexToBytes(signer))
-      if (isValid) validCount++
+      if (isValid) {
+        validCount++
+        seen.add(signer)
+      }
     }
 
     return {
@@ -216,7 +252,7 @@ export class MultiSignerAttestationService {
 
   /** Get all public keys for this multi-signer instance. */
   getPublicKeys(): string[] {
-    return this.signers.map((s) => s.getPublicKey())
+    return this.keys.map((k) => k.publicKeyHex)
   }
 
   /** Create from ORACLE_ATTESTATION_KEYS env var (comma-separated hex keys). */
@@ -224,6 +260,11 @@ export class MultiSignerAttestationService {
     const keysRaw = process.env.ORACLE_ATTESTATION_KEYS
     if (keysRaw) {
       const keys = keysRaw.split(',').map((k) => k.trim()).filter(Boolean)
+      for (const k of keys) {
+        if (k.length !== 64 || !/^[0-9a-fA-F]+$/.test(k)) {
+          throw new Error(`Invalid key in ORACLE_ATTESTATION_KEYS: expected 64 hex chars, got "${k.slice(0, 8)}..." (${k.length} chars)`)
+        }
+      }
       if (keys.length > 0) {
         return new MultiSignerAttestationService({ privateKeysHex: keys, signerSetId })
       }
@@ -237,7 +278,11 @@ export class MultiSignerAttestationService {
   }
 }
 
+// ── Hex utilities (with validation) ──────────────────────────
+
 function hexToBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) throw new Error(`Invalid hex string length: ${hex.length}`)
+  if (!/^[0-9a-fA-F]*$/.test(hex)) throw new Error('Invalid hex characters')
   const bytes = new Uint8Array(hex.length / 2)
   for (let i = 0; i < bytes.length; i++) {
     bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
