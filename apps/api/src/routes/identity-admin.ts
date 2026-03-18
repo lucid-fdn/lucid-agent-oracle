@@ -24,7 +24,7 @@ export async function resolveConflict(
   input: ResolveInput,
 ): Promise<ResolveResult> {
   const { rows } = await db.query(
-    'SELECT * FROM identity_conflicts WHERE id = $1',
+    'SELECT * FROM oracle_identity_conflicts WHERE id = $1',
     [conflictId],
   )
   if (rows.length === 0) {
@@ -44,7 +44,7 @@ export async function resolveConflict(
     if (input.resolution === 'keep_claiming') {
       // Soft-delete existing mapping
       await db.query(
-        `UPDATE wallet_mappings SET removed_at = now()
+        `UPDATE oracle_wallet_mappings SET removed_at = now()
          WHERE chain = $1 AND LOWER(address) = LOWER($2)
          AND agent_entity = $3 AND removed_at IS NULL`,
         [conflict.chain, conflict.address, conflict.existing_entity],
@@ -52,7 +52,7 @@ export async function resolveConflict(
 
       // Create new mapping for claiming entity
       await db.query(
-        `INSERT INTO wallet_mappings
+        `INSERT INTO oracle_wallet_mappings
          (agent_entity, chain, address, link_type, confidence, evidence_hash)
          VALUES ($1, $2, $3, 'self_claim', 1.0, NULL)`,
         [conflict.claiming_entity, conflict.chain, conflict.address],
@@ -61,7 +61,7 @@ export async function resolveConflict(
 
     // Resolve conflict record
     await db.query(
-      `UPDATE identity_conflicts
+      `UPDATE oracle_identity_conflicts
        SET status = $1, resolution = $2, resolved_by = $3,
            resolution_reason = $4, resolved_at = now()
        WHERE id = $5`,
@@ -120,8 +120,8 @@ export function registerAdminRoutes(
 
     const { rows } = await db.query(
       `SELECT c.*, e.evidence_type, e.chain as evidence_chain
-       FROM identity_conflicts c
-       LEFT JOIN identity_evidence e ON c.claim_evidence_id = e.id
+       FROM oracle_identity_conflicts c
+       LEFT JOIN oracle_identity_evidence e ON c.claim_evidence_id = e.id
        WHERE c.status = $1
        ORDER BY c.created_at DESC
        LIMIT $2 OFFSET $3`,
@@ -143,8 +143,8 @@ export function registerAdminRoutes(
                 'id', e.id, 'evidence_type', e.evidence_type,
                 'chain', e.chain, 'address', e.address, 'verified_at', e.verified_at
               )) FILTER (WHERE e.id IS NOT NULL) AS evidence
-       FROM identity_conflicts c
-       LEFT JOIN identity_evidence e
+       FROM oracle_identity_conflicts c
+       LEFT JOIN oracle_identity_evidence e
          ON e.agent_entity IN (c.existing_entity, c.claiming_entity)
          AND e.chain = c.chain AND LOWER(e.address) = LOWER(c.address)
        WHERE c.id = $1

@@ -72,7 +72,7 @@ export class LucidResolver {
 
       // Check if entity already exists for this tenant
       const { rows: existingEntity } = await this.db.query(
-        'SELECT id FROM agent_entities WHERE lucid_tenant = $1',
+        'SELECT id FROM oracle_agent_entities WHERE lucid_tenant = $1',
         [tenantId],
       )
 
@@ -83,7 +83,7 @@ export class LucidResolver {
         let foundErc8004Entity: string | null = null
         for (const w of wallets) {
           const { rows: mapped } = await this.db.query(
-            `SELECT agent_entity FROM wallet_mappings
+            `SELECT agent_entity FROM oracle_wallet_mappings
              WHERE chain = $1 AND LOWER(address) = LOWER($2) AND removed_at IS NULL`,
             [w.chain, w.address],
           )
@@ -96,7 +96,7 @@ export class LucidResolver {
         if (foundErc8004Entity) {
           // Cross-source merge: enrich existing ERC-8004 entity
           const { rows: enriched } = await this.db.query(
-            `UPDATE agent_entities SET lucid_tenant = $1, updated_at = now()
+            `UPDATE oracle_agent_entities SET lucid_tenant = $1, updated_at = now()
              WHERE id = $2 AND lucid_tenant IS NULL
              RETURNING id`,
             [tenantId, foundErc8004Entity],
@@ -106,7 +106,7 @@ export class LucidResolver {
             console.warn(`[lucid-resolver] Entity ${foundErc8004Entity} already has a lucid_tenant, creating new entity for tenant ${tenantId}`)
             entityId = `ae_${nanoid()}`
             await this.db.query(
-              'INSERT INTO agent_entities (id, lucid_tenant, created_at, updated_at) VALUES ($1, $2, now(), now())',
+              'INSERT INTO oracle_agent_entities (id, lucid_tenant, created_at, updated_at) VALUES ($1, $2, now(), now())',
               [entityId, tenantId],
             )
             result.created++
@@ -118,7 +118,7 @@ export class LucidResolver {
           // Create new entity
           entityId = `ae_${nanoid()}`
           await this.db.query(
-            'INSERT INTO agent_entities (id, lucid_tenant, created_at, updated_at) VALUES ($1, $2, now(), now())',
+            'INSERT INTO oracle_agent_entities (id, lucid_tenant, created_at, updated_at) VALUES ($1, $2, now(), now())',
             [entityId, tenantId],
           )
           result.created++
@@ -131,7 +131,7 @@ export class LucidResolver {
       for (const w of wallets) {
         // Insert evidence (with dedup via ON CONFLICT DO NOTHING RETURNING id)
         const { rows: evidenceRows } = await this.db.query(
-          `INSERT INTO identity_evidence
+          `INSERT INTO oracle_identity_evidence
            (agent_entity, evidence_type, chain, address, metadata_json)
            VALUES ($1, 'gateway_correlation', $2, $3, $4)
            ON CONFLICT (agent_entity, evidence_type, chain, address)
@@ -147,7 +147,7 @@ export class LucidResolver {
         } else {
           // Fallback: SELECT existing evidence id
           const { rows: existing } = await this.db.query(
-            `SELECT id FROM identity_evidence
+            `SELECT id FROM oracle_identity_evidence
              WHERE agent_entity = $1 AND evidence_type = 'gateway_correlation'
              AND chain = $2 AND LOWER(address) = LOWER($3) AND revoked_at IS NULL`,
             [entityId, w.chain, w.address],
@@ -161,7 +161,7 @@ export class LucidResolver {
 
         // Check wallet mapping
         const { rows: existingMapping } = await this.db.query(
-          `SELECT agent_entity, confidence FROM wallet_mappings
+          `SELECT agent_entity, confidence FROM oracle_wallet_mappings
            WHERE chain = $1 AND LOWER(address) = LOWER($2) AND removed_at IS NULL`,
           [w.chain, w.address],
         )
@@ -169,7 +169,7 @@ export class LucidResolver {
         if (existingMapping.length === 0) {
           // Not mapped — insert
           await this.db.query(
-            `INSERT INTO wallet_mappings
+            `INSERT INTO oracle_wallet_mappings
              (agent_entity, chain, address, link_type, confidence, evidence_hash)
              VALUES ($1, $2, $3, 'lucid_passport', 1.0, NULL)`,
             [entityId, w.chain, w.address],
@@ -178,7 +178,7 @@ export class LucidResolver {
         } else if (existingMapping[0].agent_entity !== entityId) {
           // Mapped to different entity — conflict
           await this.db.query(
-            `INSERT INTO identity_conflicts
+            `INSERT INTO oracle_identity_conflicts
              (chain, address, existing_entity, claiming_entity, existing_confidence, claiming_confidence, claim_evidence_id)
              VALUES ($1, $2, $3, $4, $5, 1.0, $6)`,
             [w.chain, w.address, existingMapping[0].agent_entity, entityId, existingMapping[0].confidence, evidenceId],
@@ -190,7 +190,7 @@ export class LucidResolver {
 
       // Upsert identity_link
       await this.db.query(
-        `INSERT INTO identity_links (agent_entity, protocol, protocol_id, link_type, confidence)
+        `INSERT INTO oracle_identity_links (agent_entity, protocol, protocol_id, link_type, confidence)
          VALUES ($1, 'lucid', $2, 'gateway_correlation', 1.0)
          ON CONFLICT (protocol, protocol_id) DO NOTHING`,
         [entityId, tenantId],

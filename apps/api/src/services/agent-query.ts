@@ -144,7 +144,7 @@ export class AgentQueryService {
 
   async exists(id: string): Promise<boolean> {
     const { rows } = await this.db.query(
-      'SELECT 1 FROM agent_entities WHERE id = $1',
+      'SELECT 1 FROM oracle_agent_entities WHERE id = $1',
       [id],
     )
     return rows.length > 0
@@ -154,7 +154,7 @@ export class AgentQueryService {
 
   async getProfile(id: string): Promise<AgentProfile | null> {
     const { rows: entityRows } = await this.db.query(
-      'SELECT * FROM agent_entities WHERE id = $1',
+      'SELECT * FROM oracle_agent_entities WHERE id = $1',
       [id],
     )
     if (entityRows.length === 0) return null
@@ -164,21 +164,21 @@ export class AgentQueryService {
     const [walletResult, linkResult, evidenceResult] = await Promise.all([
       this.db.query(
         `SELECT chain, address, link_type, confidence
-         FROM wallet_mappings
+         FROM oracle_wallet_mappings
          WHERE agent_entity = $1 AND removed_at IS NULL
          ORDER BY created_at`,
         [id],
       ),
       this.db.query(
         `SELECT protocol, protocol_id, link_type, confidence
-         FROM identity_links
+         FROM oracle_identity_links
          WHERE agent_entity = $1
          ORDER BY created_at`,
         [id],
       ),
       this.db.query(
         `SELECT COUNT(*)::int AS cnt
-         FROM identity_evidence
+         FROM oracle_identity_evidence
          WHERE agent_entity = $1 AND revoked_at IS NULL`,
         [id],
       ),
@@ -228,7 +228,7 @@ export class AgentQueryService {
 
     if (params.wallet) {
       joins.push(
-        'JOIN wallet_mappings wm ON wm.agent_entity = ae.id AND wm.removed_at IS NULL',
+        'JOIN oracle_wallet_mappings wm ON wm.agent_entity = ae.id AND wm.removed_at IS NULL',
       )
       conditions.push(`LOWER(wm.address) = LOWER(${nextParam()})`)
       values.push(params.wallet)
@@ -241,7 +241,7 @@ export class AgentQueryService {
 
     if (params.protocol) {
       joins.push(
-        'JOIN identity_links il ON il.agent_entity = ae.id',
+        'JOIN oracle_identity_links il ON il.agent_entity = ae.id',
       )
       conditions.push(`il.protocol = ${nextParam()}`)
       values.push(params.protocol)
@@ -281,7 +281,7 @@ export class AgentQueryService {
     values.push(limit + 1)
 
     const dataSql = `SELECT DISTINCT ae.id, ae.display_name, ae.erc8004_id, ae.created_at
-      FROM agent_entities ae ${joinClause} ${whereClause}
+      FROM oracle_agent_entities ae ${joinClause} ${whereClause}
       ORDER BY ae.created_at DESC, ae.id DESC
       LIMIT ${limitParam}`
 
@@ -343,10 +343,10 @@ export class AgentQueryService {
           COUNT(DISTINCT wm.id)::int AS wallet_count,
           COUNT(DISTINCT il.id)::int AS protocol_count,
           COUNT(DISTINCT ie.id)::int AS evidence_count
-        FROM agent_entities ae
-        LEFT JOIN wallet_mappings wm ON wm.agent_entity = ae.id AND wm.removed_at IS NULL
-        LEFT JOIN identity_links il ON il.agent_entity = ae.id
-        LEFT JOIN identity_evidence ie ON ie.agent_entity = ae.id AND ie.revoked_at IS NULL
+        FROM oracle_agent_entities ae
+        LEFT JOIN oracle_wallet_mappings wm ON wm.agent_entity = ae.id AND wm.removed_at IS NULL
+        LEFT JOIN oracle_identity_links il ON il.agent_entity = ae.id
+        LEFT JOIN oracle_identity_evidence ie ON ie.agent_entity = ae.id AND ie.revoked_at IS NULL
         GROUP BY ae.id, ae.display_name, ae.erc8004_id, ae.created_at
       )
       SELECT * FROM ranked
@@ -383,7 +383,7 @@ export class AgentQueryService {
 
   async getMetrics(id: string): Promise<AgentMetrics | null> {
     const { rows: entityRows } = await this.db.query(
-      'SELECT id, created_at, updated_at FROM agent_entities WHERE id = $1',
+      'SELECT id, created_at, updated_at FROM oracle_agent_entities WHERE id = $1',
       [id],
     )
     if (entityRows.length === 0) return null
@@ -403,57 +403,57 @@ export class AgentQueryService {
     ] = await Promise.all([
       // Wallets: total
       this.db.query(
-        `SELECT COUNT(*)::int AS cnt FROM wallet_mappings
+        `SELECT COUNT(*)::int AS cnt FROM oracle_wallet_mappings
          WHERE agent_entity = $1 AND removed_at IS NULL`,
         [id],
       ),
       // Wallets: by chain
       this.db.query(
-        `SELECT chain, COUNT(*)::int AS cnt FROM wallet_mappings
+        `SELECT chain, COUNT(*)::int AS cnt FROM oracle_wallet_mappings
          WHERE agent_entity = $1 AND removed_at IS NULL
          GROUP BY chain`,
         [id],
       ),
       // Wallets: by link_type
       this.db.query(
-        `SELECT link_type, COUNT(*)::int AS cnt FROM wallet_mappings
+        `SELECT link_type, COUNT(*)::int AS cnt FROM oracle_wallet_mappings
          WHERE agent_entity = $1 AND removed_at IS NULL
          GROUP BY link_type`,
         [id],
       ),
       // Evidence: total (active)
       this.db.query(
-        `SELECT COUNT(*)::int AS cnt FROM identity_evidence
+        `SELECT COUNT(*)::int AS cnt FROM oracle_identity_evidence
          WHERE agent_entity = $1 AND revoked_at IS NULL`,
         [id],
       ),
       // Evidence: by type (active)
       this.db.query(
-        `SELECT evidence_type, COUNT(*)::int AS cnt FROM identity_evidence
+        `SELECT evidence_type, COUNT(*)::int AS cnt FROM oracle_identity_evidence
          WHERE agent_entity = $1 AND revoked_at IS NULL
          GROUP BY evidence_type`,
         [id],
       ),
       // Protocols
       this.db.query(
-        `SELECT protocol FROM identity_links WHERE agent_entity = $1`,
+        `SELECT protocol FROM oracle_identity_links WHERE agent_entity = $1`,
         [id],
       ),
       // Conflicts: active
       this.db.query(
-        `SELECT COUNT(*)::int AS cnt FROM identity_conflicts
+        `SELECT COUNT(*)::int AS cnt FROM oracle_identity_conflicts
          WHERE (existing_entity = $1 OR claiming_entity = $1) AND status = 'open'`,
         [id],
       ),
       // Conflicts: resolved
       this.db.query(
-        `SELECT COUNT(*)::int AS cnt FROM identity_conflicts
+        `SELECT COUNT(*)::int AS cnt FROM oracle_identity_conflicts
          WHERE (existing_entity = $1 OR claiming_entity = $1) AND status = 'resolved'`,
         [id],
       ),
       // Last evidence verified_at
       this.db.query(
-        `SELECT MAX(verified_at) AS last_verified FROM identity_evidence
+        `SELECT MAX(verified_at) AS last_verified FROM oracle_identity_evidence
          WHERE agent_entity = $1 AND revoked_at IS NULL`,
         [id],
       ),
@@ -541,7 +541,7 @@ export class AgentQueryService {
             'chain', chain,
             'address', address
           ) AS detail
-        FROM identity_evidence
+        FROM oracle_identity_evidence
         WHERE agent_entity = $1 AND revoked_at IS NULL${cursorFilter1}
 
         UNION ALL
@@ -558,7 +558,7 @@ export class AgentQueryService {
             END,
             'status', status
           ) AS detail
-        FROM identity_conflicts
+        FROM oracle_identity_conflicts
         WHERE (existing_entity = $1 OR claiming_entity = $1)${cursorFilter2}
 
         UNION ALL
@@ -571,7 +571,7 @@ export class AgentQueryService {
             'address', address,
             'link_type', link_type
           ) AS detail
-        FROM wallet_mappings
+        FROM oracle_wallet_mappings
         WHERE agent_entity = $1 AND removed_at IS NULL${cursorFilter3}
       ) AS events
       ORDER BY timestamp DESC
@@ -606,14 +606,14 @@ export class AgentQueryService {
     const [agentResult, walletResult] = await Promise.all([
       this.db.query(
         `SELECT COUNT(DISTINCT agent_entity)::int AS cnt
-         FROM identity_links
+         FROM oracle_identity_links
          WHERE protocol = $1`,
         [id],
       ),
       this.db.query(
         `SELECT COUNT(DISTINCT wm.id)::int AS cnt
-         FROM wallet_mappings wm
-         JOIN identity_links il ON il.agent_entity = wm.agent_entity
+         FROM oracle_wallet_mappings wm
+         JOIN oracle_identity_links il ON il.agent_entity = wm.agent_entity
          WHERE il.protocol = $1 AND wm.removed_at IS NULL`,
         [id],
       ),
@@ -648,29 +648,29 @@ export class AgentQueryService {
       // Agents: total
       this.db.query(
         `SELECT COUNT(DISTINCT agent_entity)::int AS cnt
-         FROM identity_links WHERE protocol = $1`,
+         FROM oracle_identity_links WHERE protocol = $1`,
         [id],
       ),
       // Agents: by link_type
       this.db.query(
         `SELECT link_type, COUNT(DISTINCT agent_entity)::int AS cnt
-         FROM identity_links WHERE protocol = $1
+         FROM oracle_identity_links WHERE protocol = $1
          GROUP BY link_type`,
         [id],
       ),
       // Wallets: total
       this.db.query(
         `SELECT COUNT(DISTINCT wm.id)::int AS cnt
-         FROM wallet_mappings wm
-         JOIN identity_links il ON il.agent_entity = wm.agent_entity
+         FROM oracle_wallet_mappings wm
+         JOIN oracle_identity_links il ON il.agent_entity = wm.agent_entity
          WHERE il.protocol = $1 AND wm.removed_at IS NULL`,
         [id],
       ),
       // Wallets: by chain
       this.db.query(
         `SELECT wm.chain, COUNT(DISTINCT wm.id)::int AS cnt
-         FROM wallet_mappings wm
-         JOIN identity_links il ON il.agent_entity = wm.agent_entity
+         FROM oracle_wallet_mappings wm
+         JOIN oracle_identity_links il ON il.agent_entity = wm.agent_entity
          WHERE il.protocol = $1 AND wm.removed_at IS NULL
          GROUP BY wm.chain`,
         [id],
@@ -678,31 +678,31 @@ export class AgentQueryService {
       // Evidence: total
       this.db.query(
         `SELECT COUNT(DISTINCT ie.id)::int AS cnt
-         FROM identity_evidence ie
-         JOIN identity_links il ON il.agent_entity = ie.agent_entity
+         FROM oracle_identity_evidence ie
+         JOIN oracle_identity_links il ON il.agent_entity = ie.agent_entity
          WHERE il.protocol = $1 AND ie.revoked_at IS NULL`,
         [id],
       ),
       // Evidence: by type
       this.db.query(
         `SELECT ie.evidence_type, COUNT(DISTINCT ie.id)::int AS cnt
-         FROM identity_evidence ie
-         JOIN identity_links il ON il.agent_entity = ie.agent_entity
+         FROM oracle_identity_evidence ie
+         JOIN oracle_identity_links il ON il.agent_entity = ie.agent_entity
          WHERE il.protocol = $1 AND ie.revoked_at IS NULL
          GROUP BY ie.evidence_type`,
         [id],
       ),
       // Recent registrations (7 days)
       this.db.query(
-        `SELECT COUNT(*)::int AS cnt FROM identity_links
+        `SELECT COUNT(*)::int AS cnt FROM oracle_identity_links
          WHERE protocol = $1 AND created_at > now() - interval '7 days'`,
         [id],
       ),
       // Active conflicts for agents in this protocol
       this.db.query(
         `SELECT COUNT(DISTINCT ic.id)::int AS cnt
-         FROM identity_conflicts ic
-         JOIN identity_links il
+         FROM oracle_identity_conflicts ic
+         JOIN oracle_identity_links il
            ON il.agent_entity IN (ic.existing_entity, ic.claiming_entity)
          WHERE il.protocol = $1 AND ic.status = 'open'`,
         [id],

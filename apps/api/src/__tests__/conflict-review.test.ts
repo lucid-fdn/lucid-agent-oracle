@@ -28,7 +28,7 @@ describe('Admin conflict resolution', () => {
     })
     // 2. BEGIN
     db.query.mockResolvedValueOnce({ rows: [] })
-    // 3. UPDATE identity_conflicts
+    // 3. UPDATE oracle_identity_conflicts
     db.query.mockResolvedValueOnce({ rows: [] })
     // 4. COMMIT
     db.query.mockResolvedValueOnce({ rows: [] })
@@ -41,7 +41,7 @@ describe('Admin conflict resolution', () => {
 
     expect(result.status).toBe(200)
     expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE identity_conflicts'),
+      expect.stringContaining('UPDATE oracle_identity_conflicts'),
       expect.arrayContaining(['resolved', 'keep_existing', 'admin-1']),
     )
   })

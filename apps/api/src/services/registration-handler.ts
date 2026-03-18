@@ -26,7 +26,7 @@ export class RegistrationHandler {
   async register(nonce: string, signature: string): Promise<RegisterResult> {
     // 1. Lookup challenge
     const { rows: challenges } = await this.db.query(
-      'SELECT * FROM registration_challenges WHERE nonce = $1',
+      'SELECT * FROM oracle_registration_challenges WHERE nonce = $1',
       [nonce],
     )
     if (challenges.length === 0) {
@@ -62,7 +62,7 @@ export class RegistrationHandler {
       if (challenge.target_entity) {
         // Re-validate auth mapping (race guard)
         const { rows: authRows } = await this.db.query(
-          `SELECT agent_entity FROM wallet_mappings
+          `SELECT agent_entity FROM oracle_wallet_mappings
            WHERE chain = $1 AND LOWER(address) = LOWER($2)
            AND agent_entity = $3 AND removed_at IS NULL`,
           [challenge.auth_chain, challenge.auth_address, challenge.target_entity],
@@ -75,7 +75,7 @@ export class RegistrationHandler {
       } else {
         // Find-or-create entity
         const { rows: existingMapping } = await this.db.query(
-          `SELECT agent_entity FROM wallet_mappings
+          `SELECT agent_entity FROM oracle_wallet_mappings
            WHERE chain = $1 AND LOWER(address) = LOWER($2) AND removed_at IS NULL`,
           [challenge.chain, challenge.address],
         )
@@ -84,7 +84,7 @@ export class RegistrationHandler {
         } else {
           const newId = `ae_${nanoid()}`
           const { rows: entityRows } = await this.db.query(
-            'INSERT INTO agent_entities (id, created_at, updated_at) VALUES ($1, now(), now()) RETURNING id',
+            'INSERT INTO oracle_agent_entities (id, created_at, updated_at) VALUES ($1, now(), now()) RETURNING id',
             [newId],
           )
           entityId = entityRows[0].id as string
@@ -94,7 +94,7 @@ export class RegistrationHandler {
       // Store auth proof if attaching to existing entity
       if (challenge.target_entity && challenge.auth_chain && challenge.auth_address) {
         await this.db.query(
-          `INSERT INTO identity_evidence
+          `INSERT INTO oracle_identity_evidence
            (agent_entity, evidence_type, chain, address, message, metadata_json)
            VALUES ($1, 'signed_message', $2, $3, $4, $5)
            ON CONFLICT (agent_entity, evidence_type, chain, address)
@@ -117,7 +117,7 @@ export class RegistrationHandler {
 
       // Revoke previous signed_message evidence for this wallet+entity
       await this.db.query(
-        `UPDATE identity_evidence SET revoked_at = now()
+        `UPDATE oracle_identity_evidence SET revoked_at = now()
          WHERE agent_entity = $1 AND chain = $2 AND LOWER(address) = LOWER($3)
          AND evidence_type = 'signed_message' AND revoked_at IS NULL`,
         [entityId, challenge.chain, challenge.address],
@@ -126,7 +126,7 @@ export class RegistrationHandler {
       // Insert new evidence
       const evidenceHash = createHash('sha256').update(challenge.message).digest('hex')
       const { rows: evidenceRows } = await this.db.query(
-        `INSERT INTO identity_evidence
+        `INSERT INTO oracle_identity_evidence
          (agent_entity, evidence_type, chain, address, signature, message, nonce, metadata_json)
          VALUES ($1, 'signed_message', $2, $3, $4, $5, $6, $7)
          RETURNING id`,
@@ -144,7 +144,7 @@ export class RegistrationHandler {
 
       // Check existing mapping
       const { rows: existingWallet } = await this.db.query(
-        `SELECT agent_entity, confidence FROM wallet_mappings
+        `SELECT agent_entity, confidence FROM oracle_wallet_mappings
          WHERE chain = $1 AND LOWER(address) = LOWER($2) AND removed_at IS NULL`,
         [challenge.chain, challenge.address],
       )
@@ -152,7 +152,7 @@ export class RegistrationHandler {
       if (existingWallet.length > 0 && existingWallet[0].agent_entity !== entityId) {
         // Conflict
         const { rows: conflictRows } = await this.db.query(
-          `INSERT INTO identity_conflicts
+          `INSERT INTO oracle_identity_conflicts
            (chain, address, existing_entity, claiming_entity, existing_confidence, claiming_confidence, claim_evidence_id)
            VALUES ($1, $2, $3, $4, $5, 1.0, $6)
            RETURNING id`,
@@ -167,7 +167,7 @@ export class RegistrationHandler {
         )
 
         await this.db.query(
-          'UPDATE registration_challenges SET consumed_at = now() WHERE nonce = $1',
+          'UPDATE oracle_registration_challenges SET consumed_at = now() WHERE nonce = $1',
           [nonce],
         )
 
@@ -188,7 +188,7 @@ export class RegistrationHandler {
       // No conflict — upsert mapping
       if (existingWallet.length === 0) {
         await this.db.query(
-          `INSERT INTO wallet_mappings
+          `INSERT INTO oracle_wallet_mappings
            (agent_entity, chain, address, link_type, confidence, evidence_hash)
            VALUES ($1, $2, $3, 'self_claim', 1.0, $4)`,
           [entityId, challenge.chain, challenge.address, evidenceHash],
@@ -197,7 +197,7 @@ export class RegistrationHandler {
 
       // Consume nonce
       await this.db.query(
-        'UPDATE registration_challenges SET consumed_at = now() WHERE nonce = $1',
+        'UPDATE oracle_registration_challenges SET consumed_at = now() WHERE nonce = $1',
         [nonce],
       )
 
@@ -217,7 +217,7 @@ export class RegistrationHandler {
 
       // Fetch wallets for response
       const { rows: wallets } = await this.db.query(
-        `SELECT chain, address FROM wallet_mappings
+        `SELECT chain, address FROM oracle_wallet_mappings
          WHERE agent_entity = $1 AND removed_at IS NULL`,
         [entityId],
       )

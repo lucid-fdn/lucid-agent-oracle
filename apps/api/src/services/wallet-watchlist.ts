@@ -13,7 +13,7 @@ export class WalletWatchlist {
   /** Load Solana watched wallets from Postgres */
   async loadSolanaWallets(): Promise<void> {
     const result = await this.db.query(
-      `SELECT address FROM wallet_mappings WHERE chain = 'solana' AND removed_at IS NULL`,
+      `SELECT address FROM oracle_wallet_mappings WHERE chain = 'solana' AND removed_at IS NULL`,
     )
     this.solanaWallets.clear()
     for (const row of result.rows) {
@@ -24,7 +24,7 @@ export class WalletWatchlist {
   /** Load Base watched wallets from Postgres */
   async loadBaseWallets(): Promise<void> {
     const result = await this.db.query(
-      `SELECT address FROM wallet_mappings WHERE chain = 'base' AND removed_at IS NULL`,
+      `SELECT address FROM oracle_wallet_mappings WHERE chain = 'base' AND removed_at IS NULL`,
     )
     this.baseWallets.clear()
     for (const row of result.rows) {

@@ -54,7 +54,7 @@ describe('IdentityResolver', () => {
 
     // Check agent_entity was created
     expect(mockDb.query).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO agent_entities'),
+      expect.stringContaining('INSERT INTO oracle_agent_entities'),
       expect.any(Array),
     )
     // Check watchlist update published
@@ -100,7 +100,7 @@ describe('IdentityResolver', () => {
     await resolver.handleERC8004Event(event)
 
     expect(mockDb.query).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE agent_entities'),
+      expect.stringContaining('UPDATE oracle_agent_entities'),
       expect.arrayContaining([expect.stringContaining('"score":8500')]),
     )
   })

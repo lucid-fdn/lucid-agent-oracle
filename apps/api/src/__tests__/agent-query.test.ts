@@ -57,7 +57,7 @@ describe('AgentQueryService', () => {
       expect(result.data).toHaveLength(1)
       expect(result.has_more).toBe(false)
       // Verify wallet join was used
-      expect(db.query.mock.calls[0][0]).toContain('wallet_mappings')
+      expect(db.query.mock.calls[0][0]).toContain('oracle_wallet_mappings')
       expect(db.query.mock.calls[0][0]).toContain('LOWER')
     })
 

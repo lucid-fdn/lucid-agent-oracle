@@ -96,7 +96,7 @@ export function registerIdentityRoutes(
 
       // Verify auth wallet is mapped to target entity
       const { rows } = await db.query(
-        `SELECT id FROM wallet_mappings
+        `SELECT id FROM oracle_wallet_mappings
          WHERE chain = $1 AND LOWER(address) = LOWER($2)
          AND agent_entity = $3 AND removed_at IS NULL`,
         [auth_chain, auth_address, target_entity],
@@ -123,7 +123,7 @@ export function registerIdentityRoutes(
 
     // Store challenge
     await db.query(
-      `INSERT INTO registration_challenges
+      `INSERT INTO oracle_registration_challenges
        (nonce, chain, address, target_entity, auth_chain, auth_address, message, environment, expires_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [nonce, chain, address, target_entity ?? null, auth_chain ?? null, auth_address ?? null, message, environment, expiresAt],
@@ -143,7 +143,7 @@ export function registerIdentityRoutes(
 
     // Look up challenge to get address for rate limiting
     const { rows: challenges } = await db.query(
-      'SELECT chain, address FROM registration_challenges WHERE nonce = $1',
+      'SELECT chain, address FROM oracle_registration_challenges WHERE nonce = $1',
       [nonce],
     )
     if (challenges.length > 0) {
@@ -188,7 +188,7 @@ export function registerIdentityRoutes(
 /** Clean up expired challenges — runs on startup + every 15 minutes */
 export async function cleanupExpiredChallenges(db: DbClient): Promise<number> {
   const { rows } = await db.query(
-    `DELETE FROM registration_challenges
+    `DELETE FROM oracle_registration_challenges
      WHERE expires_at < now() - interval '1 hour'
      RETURNING nonce`,
   )

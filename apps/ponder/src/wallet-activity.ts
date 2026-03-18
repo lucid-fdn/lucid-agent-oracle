@@ -14,14 +14,14 @@ import { computeEventId } from '../../../packages/core/src/types/events.js'
  */
 const watchedAddresses = new Set<string>()
 
-/** Load watched addresses from Postgres wallet_mappings table. */
+/** Load watched addresses from Postgres oracle_wallet_mappings table. */
 async function loadWatchlist(dbUrl: string): Promise<void> {
   const { default: pg } = await import('pg')
   const client = new pg.Client({ connectionString: dbUrl })
   await client.connect()
   try {
     const result = await client.query(
-      `SELECT LOWER(address) as address FROM wallet_mappings WHERE chain = 'base' AND removed_at IS NULL`,
+      `SELECT LOWER(address) as address FROM oracle_wallet_mappings WHERE chain = 'base' AND removed_at IS NULL`,
     )
     watchedAddresses.clear()
     for (const row of result.rows) {
