@@ -14,6 +14,9 @@ import { registerAgentRoutes } from '../apps/api/src/routes/agents.js'
 import { registerProtocolRoutes } from '../apps/api/src/routes/protocols.js'
 import { registerFeedRoutes } from '../apps/api/src/routes/feeds.js'
 import { registerReportRoutes } from '../apps/api/src/routes/reports.js'
+import { registerStreamRoutes } from '../apps/api/src/routes/stream.js'
+import { registerAlertRoutes } from '../apps/api/src/routes/alerts.js'
+import { EventBus } from '../apps/api/src/services/event-bus.js'
 import { ProblemDetail, CursorQuery, CursorMeta, AgentIdParams, ProtocolIdParams, registerGlobalErrorHandler } from '../apps/api/src/schemas/common.js'
 import {
   FeedListResponse,
@@ -21,6 +24,11 @@ import {
   FeedMethodologyResponse,
   ReportLatestResponse,
 } from '../apps/api/src/schemas/feeds.js'
+import { StreamTokenResponse, StreamQuery } from '../apps/api/src/schemas/stream.js'
+import {
+  CreateAlertBody, CreateAlertResponse, AlertListResponse,
+  AlertSubscription, AlertIdParams as AlertIdParamsSchema,
+} from '../apps/api/src/schemas/alerts.js'
 
 const app = Fastify({ logger: false }).withTypeProvider<TypeBoxTypeProvider>()
 
@@ -40,6 +48,8 @@ await app.register(swagger, {
       { name: 'protocols', description: 'Protocol registry and metrics' },
       { name: 'feeds', description: 'Oracle economic feeds' },
       { name: 'reports', description: 'Signed attestation reports' },
+      { name: 'streaming', description: 'SSE streaming and stream tokens' },
+      { name: 'alerts', description: 'Webhook alert subscriptions' },
     ],
     components: {
       securitySchemes: {
@@ -60,6 +70,13 @@ app.addSchema(CursorQuery)
 app.addSchema(CursorMeta)
 app.addSchema(AgentIdParams)
 app.addSchema(ProtocolIdParams)
+app.addSchema(StreamTokenResponse)
+app.addSchema(StreamQuery)
+app.addSchema(CreateAlertBody)
+app.addSchema(AlertSubscription)
+app.addSchema(CreateAlertResponse)
+app.addSchema(AlertListResponse)
+app.addSchema(AlertIdParamsSchema)
 
 registerGlobalErrorHandler(app)
 
@@ -72,6 +89,8 @@ registerAgentRoutes(app, stubDb, null)
 registerProtocolRoutes(app, stubDb)
 registerFeedRoutes(app, null)
 registerReportRoutes(app, null)
+registerStreamRoutes(app, new EventBus())
+registerAlertRoutes(app, stubDb)
 
 await app.ready()
 const spec = app.swagger()

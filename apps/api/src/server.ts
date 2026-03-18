@@ -86,9 +86,9 @@ app.addSchema(ProtocolIdParams)
 app.addSchema(StreamTokenResponse)
 app.addSchema(StreamQuery)
 app.addSchema(CreateAlertBody)
+app.addSchema(AlertSubscription)
 app.addSchema(CreateAlertResponse)
 app.addSchema(AlertListResponse)
-app.addSchema(AlertSubscription)
 app.addSchema(AlertIdParams)
 
 // Global error handler — ensures ALL errors are RFC 9457 Problem Details
