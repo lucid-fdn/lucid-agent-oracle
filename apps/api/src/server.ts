@@ -209,63 +209,68 @@ let watchlistConsumer: RedpandaConsumer | null = null
 let resolverProducer: RedpandaProducer | null = null
 let pgClient: { end(): Promise<void> } | null = null
 
-if (databaseUrl && redpandaBrokers) {
+if (databaseUrl) {
   const { default: pg } = await import('pg')
   const client = new pg.Client({ connectionString: databaseUrl })
   await client.connect()
   pgClient = client
-
-  resolverProducer = new RedpandaProducer({
-    brokers: redpandaBrokers.split(','),
-    clientId: 'oracle-api-resolver',
-  })
-  await resolverProducer.connect()
 
   const watchlist = new WalletWatchlist(client)
   await watchlist.loadSolanaWallets()
   await watchlist.loadBaseWallets()
   app.log.info(`Watchlist loaded: ${watchlist.getSolanaWallets().size} Solana, ${watchlist.getBaseWallets().size} Base wallets`)
 
-  // Auto-discover identity topics from registry and subscribe
-  const identityTopics = getIdentityTopics()
-  if (identityTopics.length > 0) {
-    resolverConsumer = new RedpandaConsumer({
+  // Redpanda-dependent features (optional)
+  if (redpandaBrokers) {
+    resolverProducer = new RedpandaProducer({
       brokers: redpandaBrokers.split(','),
-      groupId: 'oracle-api-resolver',
+      clientId: 'oracle-api-resolver',
     })
-    await resolverConsumer.subscribe(identityTopics)
-    resolverConsumer.runRaw(async (_key, value) => {
+    await resolverProducer.connect()
+
+    // Auto-discover identity topics from registry and subscribe
+    const identityTopics = getIdentityTopics()
+    if (identityTopics.length > 0) {
+      resolverConsumer = new RedpandaConsumer({
+        brokers: redpandaBrokers.split(','),
+        groupId: 'oracle-api-resolver',
+      })
+      await resolverConsumer.subscribe(identityTopics)
+      resolverConsumer.runRaw(async (_key, value) => {
+        if (!value) return
+        const event = JSON.parse(value) as Record<string, unknown>
+        const source = event.source as string
+        await dispatchIdentityEvent(source, event, client, resolverProducer!)
+      }).catch((err) => {
+        app.log.error('Identity resolver consumer error:', err)
+      })
+      app.log.info(`Identity resolver subscribed to: ${identityTopics.join(', ')}`)
+    }
+
+    // Start watchlist consumer
+    watchlistConsumer = new RedpandaConsumer({
+      brokers: redpandaBrokers.split(','),
+      groupId: 'oracle-api-watchlist',
+    })
+    await watchlistConsumer.subscribe([TOPICS.WATCHLIST])
+    watchlistConsumer.runRaw(async (_key, value) => {
       if (!value) return
-      const event = JSON.parse(value) as Record<string, unknown>
-      const source = event.source as string
-      await dispatchIdentityEvent(source, event, client, resolverProducer!)
+      const update = JSON.parse(value) as WatchlistUpdate
+      watchlist.handleWatchlistUpdate(update)
     }).catch((err) => {
-      app.log.error('Identity resolver consumer error:', err)
+      app.log.error('Watchlist consumer error:', err)
     })
-    app.log.info(`Identity resolver subscribed to: ${identityTopics.join(', ')}`)
-  }
 
-  // Start watchlist consumer
-  watchlistConsumer = new RedpandaConsumer({
-    brokers: redpandaBrokers.split(','),
-    groupId: 'oracle-api-watchlist',
-  })
-  await watchlistConsumer.subscribe([TOPICS.WATCHLIST])
-  watchlistConsumer.runRaw(async (_key, value) => {
-    if (!value) return
-    const update = JSON.parse(value) as WatchlistUpdate
-    watchlist.handleWatchlistUpdate(update)
-  }).catch((err) => {
-    app.log.error('Watchlist consumer error:', err)
-  })
-
-  // Auto-mount webhook routes from registry
-  const webhookCount = mountWebhookRoutes(app, resolverProducer, {
-    env: process.env as Record<string, string | undefined>,
-    services: { watchlist },
-  })
-  if (webhookCount > 0) {
-    app.log.info(`${webhookCount} webhook route(s) auto-mounted from adapter registry`)
+    // Auto-mount webhook routes from registry
+    const webhookCount = mountWebhookRoutes(app, resolverProducer, {
+      env: process.env as Record<string, string | undefined>,
+      services: { watchlist },
+    })
+    if (webhookCount > 0) {
+      app.log.info(`${webhookCount} webhook route(s) auto-mounted from adapter registry`)
+    }
+  } else {
+    app.log.warn('REDPANDA_BROKERS not set — identity resolver and watchlist consumers disabled')
   }
 
   // Plan 3A v2: Fail-fast on missing CURSOR_SECRET
@@ -289,8 +294,8 @@ if (databaseUrl && redpandaBrokers) {
   registerAlertRoutes(app, client)
   app.log.info('Stream and alert routes mounted')
 
-  // Plan 4B: Self-registration + admin endpoints
-  registerIdentityRoutes(app, client, resolverProducer)
+  // Plan 4B: Self-registration + admin endpoints (resolverProducer may be null without Redpanda)
+  registerIdentityRoutes(app, client, resolverProducer as any)
   app.log.info('Identity registration routes mounted')
 
   const adminKey = process.env.ADMIN_KEY
