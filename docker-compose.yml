@@ -2,52 +2,76 @@
 # Lucid Agent Oracle — local development stack
 #
 # Usage:
-#   docker compose up -d            # Start infra + services
+#   cp .env.example .env              # Set secrets
+#   docker compose up -d              # Start infra + services
 #   docker compose up -d postgres clickhouse redis redpanda  # Infra only
-#   docker compose logs -f api      # Tail API logs
-#   docker compose down -v          # Tear down + delete volumes
+#   docker compose logs -f api        # Tail API logs
+#   docker compose down -v            # Tear down + delete volumes
 ##
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
   # ── Infrastructure ────────────────────────────────────────────
 
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
       POSTGRES_DB: oracle
-      POSTGRES_USER: oracle
-      POSTGRES_PASSWORD: oracle
+      POSTGRES_USER: ${POSTGRES_USER:-oracle}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oracle}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./migrations/supabase:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U oracle -d oracle"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-oracle} -d oracle"]
       interval: 5s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+    logging: *default-logging
+    networks: [infra]
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24-alpine
+    image: clickhouse/clickhouse-server:24.8-alpine
+    restart: unless-stopped
     ports:
       - "8123:8123"   # HTTP
       - "9000:9000"   # Native
     environment:
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
       CLICKHOUSE_DB: oracle
     volumes:
       - chdata:/var/lib/clickhouse
       - ./migrations/clickhouse:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--password", "clickhouse", "--query", "SELECT 1"]
+      test: ["CMD", "clickhouse-client", "--password", "${CLICKHOUSE_PASSWORD:-clickhouse}", "--query", "SELECT 1"]
       interval: 5s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+    logging: *default-logging
+    networks: [infra]
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
@@ -57,9 +81,16 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *default-logging
+    networks: [infra]
 
   redpanda:
-    image: redpandadata/redpanda:latest
+    image: redpandadata/redpanda:v24.1.7
+    restart: unless-stopped
     command:
       - redpanda
       - start
@@ -80,6 +111,13 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+    logging: *default-logging
+    networks: [infra]
 
   # ── Application services ──────────────────────────────────────
 
@@ -87,18 +125,19 @@ services:
     build:
       context: .
       target: api
+    restart: unless-stopped
     ports:
       - "4040:4040"
     environment:
       PORT: "4040"
-      DATABASE_URL: postgresql://oracle:oracle@postgres:5432/oracle
+      DATABASE_URL: postgresql://${POSTGRES_USER:-oracle}:${POSTGRES_PASSWORD:-oracle}@postgres:5432/oracle
       CLICKHOUSE_URL: http://clickhouse:8123
-      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
       REDIS_URL: redis://redis:6379
       REDPANDA_BROKERS: redpanda:9092
-      CURSOR_SECRET: dev-cursor-secret-change-in-prod
-      STREAM_TOKEN_SECRET: dev-stream-token-secret-change-in-prod
-      WEBHOOK_SECRET_KEY: dev-webhook-secret-key-32chars!!
+      CURSOR_SECRET: ${CURSOR_SECRET:-dev-cursor-secret-change-in-prod}
+      STREAM_TOKEN_SECRET: ${STREAM_TOKEN_SECRET:-dev-stream-token-secret-change-in-prod}
+      WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY:-dev-webhook-secret-key-32chars!!}
     depends_on:
       postgres:
         condition: service_healthy
@@ -114,18 +153,26 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+    logging: *default-logging
+    networks: [infra, app]
 
   worker:
     build:
       context: .
       target: worker
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://oracle:oracle@postgres:5432/oracle
+      DATABASE_URL: postgresql://${POSTGRES_USER:-oracle}:${POSTGRES_PASSWORD:-oracle}@postgres:5432/oracle
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
       REDPANDA_BROKERS: redpanda:9092
-      ORACLE_ATTESTATION_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
+      ORACLE_ATTESTATION_KEY: ${ORACLE_ATTESTATION_KEY:-0000000000000000000000000000000000000000000000000000000000000001}
       POLL_INTERVAL_MS: "30000"
       COMPUTATION_WINDOW_MS: "3600000"
     depends_on:
@@ -135,15 +182,23 @@ services:
         condition: service_healthy
       redpanda:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+    logging: *default-logging
+    networks: [infra]
 
   webhook-worker:
     build:
       context: .
       target: webhook-worker
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://oracle:oracle@postgres:5432/oracle
+      DATABASE_URL: postgresql://${POSTGRES_USER:-oracle}:${POSTGRES_PASSWORD:-oracle}@postgres:5432/oracle
       REDIS_URL: redis://redis:6379
-      WEBHOOK_SECRET_KEY: dev-webhook-secret-key-32chars!!
+      WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY:-dev-webhook-secret-key-32chars!!}
       WEBHOOK_TIMEOUT_MS: "5000"
       WEBHOOK_MAX_RETRIES: "5"
     depends_on:
@@ -151,6 +206,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+    logging: *default-logging
+    networks: [infra]
+
+networks:
+  infra:
+    driver: bridge
+  app:
+    driver: bridge
 
 volumes:
   pgdata:
