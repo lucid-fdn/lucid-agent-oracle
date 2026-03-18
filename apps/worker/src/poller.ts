@@ -21,12 +21,15 @@ export async function pollGatewayTable(
   if (!ALLOWED_TABLES.has(source_table)) throw new Error(`Disallowed source table: ${source_table}`)
   if (!ALLOWED_COLUMNS.has(watermark_column)) throw new Error(`Disallowed watermark column: ${watermark_column}`)
 
+  // Empty last_seen_id (from initial seed) → use 0 for bigint comparison
+  const safeLastId = last_seen_id === '' ? '0' : last_seen_id
+
   const result = await pool.query(
     `SELECT * FROM ${source_table}
-     WHERE (${watermark_column}, id) > ($1, $2)
+     WHERE (${watermark_column}, id::text) > ($1, $2)
      ORDER BY ${watermark_column}, id
      LIMIT 1000`,
-    [last_seen_ts, last_seen_id]
+    [last_seen_ts, safeLastId]
   )
 
   if (result.rows.length === 0) {
