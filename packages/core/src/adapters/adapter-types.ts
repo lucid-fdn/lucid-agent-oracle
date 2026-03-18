@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import type { RawEconomicEvent } from '../types/events.js'
 import type { ERC8004Event } from '../types/identity.js'
 import type { RedpandaProducer } from '../clients/redpanda.js'
+import type { AdapterSink } from './sink.js'
 
 /**
  * Core adapter definition — the single interface every data source implements.
@@ -59,6 +60,8 @@ export interface WebhookContext {
       getBaseWallets(): Set<string>
     }
   }
+  /** AdapterSink for no-broker mode — adapters should prefer this over producer */
+  readonly sink?: AdapterSink
 }
 
 /**

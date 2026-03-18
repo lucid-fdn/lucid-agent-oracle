@@ -33,6 +33,12 @@ export { topicForSource } from './adapters/topic-for-source.js'
 export { mountWebhookRoutes } from './adapters/webhook-router.js'
 export { dispatchIdentityEvent, getIdentityTopics } from './adapters/identity-dispatch.js'
 
+// Adapter Sink (no-broker mode)
+export type { AdapterSink, RawAdapterEvent } from './adapters/sink.js'
+export { DirectSink } from './adapters/direct-sink.js'
+export { createAdapterSink, type SinkConfig } from './adapters/sink-factory.js'
+export { processAdapterEvents, startResolverPoller, type ResolverPollConfig, type IdentityDispatcher } from './adapters/resolver-poller.js'
+
 // Identity verification (Plan 4B)
 export type { WalletVerifier } from './identity/wallet-verifier.js'
 export { VerifierRegistry, verifierRegistry } from './identity/wallet-verifier.js'

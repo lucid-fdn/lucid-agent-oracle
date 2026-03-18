@@ -13,6 +13,8 @@ import {
   TOPICS,
   registerDefaultAdapters,
   mountWebhookRoutes,
+  createAdapterSink,
+  startResolverPoller,
   dispatchIdentityEvent,
   getIdentityTopics,
   adapterRegistry,
@@ -261,17 +263,40 @@ if (databaseUrl) {
       app.log.error('Watchlist consumer error:', err)
     })
 
-    // Auto-mount webhook routes from registry
-    const webhookCount = mountWebhookRoutes(app, resolverProducer, {
+    // Auto-mount webhook routes (with sink for no-broker mode)
+    const adapterSink = createAdapterSink({ databaseUrl, brokers: redpandaBrokers })
+    const webhookCount = mountWebhookRoutes(app, resolverProducer as any, {
       env: process.env as Record<string, string | undefined>,
       services: { watchlist },
+      sink: adapterSink,
     })
     if (webhookCount > 0) {
       app.log.info(`${webhookCount} webhook route(s) auto-mounted from adapter registry`)
     }
   } else {
+    // No Redpanda: create sink + mount webhooks without broker
+    const adapterSink = createAdapterSink({ databaseUrl })
+    const webhookCount = mountWebhookRoutes(app, null as any, {
+      env: process.env as Record<string, string | undefined>,
+      services: { watchlist },
+      sink: adapterSink,
+    })
+    if (webhookCount > 0) {
+      app.log.info(`${webhookCount} webhook route(s) auto-mounted (no-broker mode)`)
+    }
+
     app.log.warn('REDPANDA_BROKERS not set — identity resolver and watchlist consumers disabled')
   }
+
+  // Start resolver poller (processes staging table events → identity tables)
+  const resolverPoller = startResolverPoller(
+    new (await import('pg')).default.Pool({ connectionString: databaseUrl }),
+    async (source, payload, db) => {
+      await dispatchIdentityEvent(source, payload as Record<string, unknown>, db as any, null as any)
+    },
+    { pollIntervalMs: parseInt(process.env.RESOLVER_POLL_INTERVAL_MS ?? '5000', 10), batchSize: 100 },
+  )
+  app.log.info('Resolver poller started (processes adapter staging events)')
 
   // Plan 3A v2: Fail-fast on missing CURSOR_SECRET
   assertCursorSecret()

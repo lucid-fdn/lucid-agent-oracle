@@ -60,7 +60,24 @@ const heliusWebhook: WebhookAdapter = {
       const events = handleHeliusWebhookPayload(transactions, watchedWallets)
 
       if (events.length > 0) {
-        await producer.publishEvents(TOPICS.RAW_AGENT_WALLETS, events)
+        if (context.sink) {
+          // No-broker mode: write to staging table via AdapterSink
+          await context.sink.writeRawEvents(events.map((e) => ({
+            event_id: e.event_id,
+            source: 'helius',
+            source_adapter_ver: 1,
+            chain: 'solana',
+            event_type: e.event_type,
+            event_timestamp: e.event_timestamp,
+            payload_json: JSON.stringify(e),
+            block_number: e.block_number ?? undefined,
+            tx_hash: e.tx_hash ?? undefined,
+            log_index: e.log_index ?? undefined,
+          })))
+        } else {
+          // Broker mode: publish to Redpanda
+          await producer.publishEvents(TOPICS.RAW_AGENT_WALLETS, events)
+        }
       }
 
       return { processed: events.length }
