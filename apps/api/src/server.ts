@@ -136,7 +136,7 @@ const redpandaBrokers = process.env.REDPANDA_BROKERS
 let clickhouse: OracleClickHouse | null = null
 let consumer: RedpandaConsumer | null = null
 
-if (clickhouseUrl && redpandaBrokers) {
+if (clickhouseUrl) {
   // 1. Connect to ClickHouse
   clickhouse = new OracleClickHouse({
     url: clickhouseUrl,
@@ -144,18 +144,23 @@ if (clickhouseUrl && redpandaBrokers) {
     password: process.env.CLICKHOUSE_PASSWORD ?? '',
   })
 
-  // 2. Connect Redpanda consumer
+  // 2. Backfill from ClickHouse
+  await initFeedCache(clickhouse)
+  app.log.info('Feed cache backfilled from ClickHouse')
+
+  // 3. Reconcile
+  await reconcileFeedCache(clickhouse)
+  app.log.info('Feed cache reconciled')
+}
+
+if (clickhouseUrl && redpandaBrokers) {
+  // 4. Connect Redpanda consumer (optional — for real-time updates)
   const hostname = process.env.HOSTNAME ?? `api-${process.pid}`
   consumer = new RedpandaConsumer({
     brokers: redpandaBrokers.split(','),
     groupId: `oracle-api-${hostname}`,
   })
 
-  // 3. Backfill from ClickHouse
-  await initFeedCache(clickhouse)
-  app.log.info('Feed cache backfilled from ClickHouse')
-
-  // 4. Start consumer
   await consumer.subscribe([TOPICS.INDEX_UPDATES])
   consumer.runRaw(async (_key, value) => {
     if (value) {
@@ -184,11 +189,8 @@ if (clickhouseUrl && redpandaBrokers) {
   })
   app.log.info('INDEX_UPDATES consumer started')
 
-  // 5. Reconcile
-  await reconcileFeedCache(clickhouse)
-  app.log.info('Feed cache reconciled')
-} else {
-  app.log.warn('CLICKHOUSE_URL or REDPANDA_BROKERS not set — running in Plan 1 mode (empty cache)')
+} else if (!clickhouseUrl) {
+  app.log.warn('CLICKHOUSE_URL not set — running in Plan 1 mode (empty cache)')
 }
 
 // Plan 4A: Registry-driven identity resolver + webhook auto-wiring
