@@ -49,7 +49,7 @@ export async function publishFeedValue(
   result: FeedComputeResult,
   attestation: AttestationService,
   clickhouse: OracleClickHouse,
-  producer: RedpandaProducer,
+  producer: RedpandaProducer | null,
   config: WorkerConfig,
 ): Promise<void> {
   const now = new Date()
@@ -104,8 +104,10 @@ export async function publishFeedValue(
   // Persist to ClickHouse (source of truth)
   await clickhouse.insertPublishedFeedValue(row)
 
-  // Fanout to API cache
-  await producer.publishJson(TOPICS.INDEX_UPDATES, result.feedId, row)
+  // Fanout to API cache (skip if no Redpanda)
+  if (producer) {
+    await producer.publishJson(TOPICS.INDEX_UPDATES, result.feedId, row)
+  }
 
   // Fanout to publisher service for on-chain posting
   const publicationRequest: PublicationRequest = {
@@ -125,5 +127,7 @@ export async function publishFeedValue(
     signatures_json: JSON.stringify(envelope.signatures),
   }
 
-  await producer.publishJson(TOPICS.PUBLICATION, result.feedId, publicationRequest)
+  if (producer) {
+    await producer.publishJson(TOPICS.PUBLICATION, result.feedId, publicationRequest)
+  }
 }

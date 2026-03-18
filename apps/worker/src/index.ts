@@ -33,11 +33,17 @@ const clickhouse = new OracleClickHouse({
   password: config.clickhousePassword,
 })
 
-const producer = new RedpandaProducer({
-  brokers: config.redpandaBrokers,
-  clientId: 'oracle-worker',
-})
-await producer.connect()
+let producer: RedpandaProducer | null = null
+if (config.redpandaBrokers) {
+  producer = new RedpandaProducer({
+    brokers: config.redpandaBrokers,
+    clientId: 'oracle-worker',
+  })
+  await producer.connect()
+  console.log('Redpanda producer connected')
+} else {
+  console.log('REDPANDA_BROKERS not set — running without event streaming')
+}
 
 const attestation = new AttestationService({ privateKeyHex: config.attestationKey })
 const checkpointMgr = new CheckpointManager(config.databaseUrl)
@@ -54,7 +60,7 @@ const shutdown = async () => {
   shuttingDown = true
   console.log('Shutting down...')
   await lock.release()
-  await producer.disconnect()
+  await producer?.disconnect()
   await clickhouse.close()
   await checkpointMgr.close()
   await pool.end()

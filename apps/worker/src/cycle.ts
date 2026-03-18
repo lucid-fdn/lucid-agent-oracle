@@ -31,7 +31,7 @@ export async function seedLastPublishTimes(clickhouse: OracleClickHouse): Promis
 export async function runCycle(
   config: WorkerConfig,
   clickhouse: OracleClickHouse,
-  producer: RedpandaProducer,
+  producer: RedpandaProducer | null,
   attestation: AttestationService,
   checkpointMgr: CheckpointManager,
   pool: pg.Pool,

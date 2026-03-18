@@ -9,7 +9,7 @@ export interface WorkerConfig {
   clickhouseUrl: string
   clickhouseUser: string
   clickhousePassword: string
-  redpandaBrokers: string[]
+  redpandaBrokers: string[] | null
   attestationKey: string
 }
 
@@ -29,7 +29,7 @@ export function loadConfig(): WorkerConfig {
     clickhouseUrl: required('CLICKHOUSE_URL'),
     clickhouseUser: process.env.CLICKHOUSE_USER ?? 'default',
     clickhousePassword: required('CLICKHOUSE_PASSWORD'),
-    redpandaBrokers: required('REDPANDA_BROKERS').split(','),
+    redpandaBrokers: process.env.REDPANDA_BROKERS ? process.env.REDPANDA_BROKERS.split(',') : null,
     attestationKey: required('ORACLE_ATTESTATION_KEY'),
   }
 }
