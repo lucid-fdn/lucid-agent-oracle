@@ -1,3 +1,6 @@
+import { startTelemetry, shutdownTelemetry } from './telemetry.js'
+startTelemetry()
+
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
@@ -333,6 +336,7 @@ const shutdown = async () => {
   // Plan 2A resources
   await consumer?.disconnect()
   await clickhouse?.close()
+  await shutdownTelemetry()
   await app.close()
   process.exit(0)
 }

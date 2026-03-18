@@ -1,4 +1,5 @@
 import type { Channel, OracleEvent } from '@lucid/oracle-core'
+import { oracleMetrics } from '@lucid/oracle-core'
 import { publishEvent, enqueueWebhook, nextEventId, getRedis } from './redis.js'
 
 export interface EmitOptions {
@@ -20,6 +21,7 @@ export class EventBus {
   async emit(opts: EmitOptions): Promise<void> {
     const { channel, payload, sse, webhook } = opts
     if (!sse && !webhook) return
+    oracleMetrics.eventBusEmitCount.add(1, { channel })
 
     const id = await nextEventId()
     const event: OracleEvent = {
@@ -46,6 +48,7 @@ export class EventBus {
         if (this.buffer.length > BUFFER_MAX) {
           const dropped = this.buffer.shift()!
           console.warn(`[event-bus] Buffer overflow — dropped event ${dropped.event.id} on ${dropped.channel}`)
+          oracleMetrics.eventBusDropCount.add(1, { channel: dropped.channel })
         }
       }
     }

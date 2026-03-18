@@ -138,6 +138,8 @@ services:
       CURSOR_SECRET: ${CURSOR_SECRET:-dev-cursor-secret-change-in-prod}
       STREAM_TOKEN_SECRET: ${STREAM_TOKEN_SECRET:-dev-stream-token-secret-change-in-prod}
       WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY:-dev-webhook-secret-key-32chars!!}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: oracle-api
     depends_on:
       postgres:
         condition: service_healthy
@@ -175,6 +177,8 @@ services:
       ORACLE_ATTESTATION_KEY: ${ORACLE_ATTESTATION_KEY:-0000000000000000000000000000000000000000000000000000000000000001}
       POLL_INTERVAL_MS: "30000"
       COMPUTATION_WINDOW_MS: "3600000"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: oracle-worker
     depends_on:
       postgres:
         condition: service_healthy
@@ -201,6 +205,8 @@ services:
       WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY:-dev-webhook-secret-key-32chars!!}
       WEBHOOK_TIMEOUT_MS: "5000"
       WEBHOOK_MAX_RETRIES: "5"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: oracle-webhook-worker
     depends_on:
       postgres:
         condition: service_healthy
@@ -214,6 +220,73 @@ services:
     logging: *default-logging
     networks: [infra]
 
+  # ── Observability stack ───────────────────────────────────────
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.98.0
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./infra/otel/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8889:8889"   # Prometheus metrics exporter
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *default-logging
+    networks: [infra]
+
+  tempo:
+    image: grafana/tempo:2.4.1
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./infra/otel/tempo.yaml:/etc/tempo.yaml:ro
+      - tempodata:/var/tempo
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *default-logging
+    networks: [infra]
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d"]
+    volumes:
+      - ./infra/otel/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports:
+      - "9090:9090"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *default-logging
+    networks: [infra]
+
+  grafana:
+    image: grafana/grafana:10.4.1
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./infra/otel/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - grafanadata:/var/lib/grafana
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *default-logging
+    networks: [infra, app]
+
 networks:
   infra:
     driver: bridge
@@ -225,3 +298,6 @@ volumes:
   chdata:
   redisdata:
   rpdata:
+  tempodata:
+  promdata:
+  grafanadata:

@@ -74,6 +74,9 @@ export { RedpandaProducer, RedpandaConsumer, TOPICS, type RedpandaConfig } from 
 // Utils
 export { canonicalStringify } from './utils/canonical-json.js'
 
+// Metrics (lightweight — no OTel SDK dependency, just @opentelemetry/api)
+export * as oracleMetrics from './metrics.js'
+
 // Events (Plan 3E)
 export {
   CHANNELS,
