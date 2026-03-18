@@ -62,6 +62,13 @@ const TOOL_ANNOTATIONS: Record<string, { method: string; tool: Record<string, un
   },
 }
 
+// Additional annotations that share a path (can't be in the dict above)
+const MULTI_METHOD_ANNOTATIONS: Array<{ path: string; method: string; tool: Record<string, unknown> }> = [
+  { path: '/v1/oracle/alerts', method: 'post', tool: { 'tool-name': 'oracle_create_alert', description: 'Create a webhook alert subscription for feed updates, agent events, or reports. Requires pro tier.' } },
+  { path: '/v1/oracle/alerts', method: 'get', tool: { 'tool-name': 'oracle_list_alerts', description: 'List active webhook alert subscriptions for the authenticated tenant.' } },
+  { path: '/v1/oracle/alerts/{id}', method: 'delete', tool: { 'tool-name': 'oracle_delete_alert', description: 'Delete a webhook alert subscription.' } },
+]
+
 // Explicitly disabled endpoints (exclude from MCP)
 // Uses tuples to support multiple methods on the same path
 const DISABLED_ENTRIES: Array<{ path: string; method: string }> = [
@@ -76,19 +83,33 @@ const DISABLED_ENTRIES: Array<{ path: string; method: string }> = [
   { path: '/v1/internal/identity/conflicts/{id}', method: 'get' },
   { path: '/v1/internal/identity/conflicts/{id}', method: 'patch' },
   { path: '/v1/internal/identity/resolve-lucid', method: 'post' },
+  // SSE stream — not MCP-compatible (long-lived connection)
+  { path: '/v1/oracle/stream', method: 'get' },
+  { path: '/v1/oracle/stream/token', method: 'post' },
 ]
 
 const specPath = process.argv[2] ?? 'openapi.json'
 const spec = JSON.parse(readFileSync(specPath, 'utf-8')) as OpenAPISpec
 let warnings = 0
 
-// Add tool annotations
+// Add tool annotations (single-method paths)
 for (const [path, config] of Object.entries(TOOL_ANNOTATIONS)) {
   const pathObj = spec.paths[path]
   if (pathObj?.[config.method]) {
     pathObj[config.method]['x-speakeasy-mcp'] = config.tool
   } else {
     console.warn(`WARNING: Tool path not found in spec: ${config.method.toUpperCase()} ${path}`)
+    warnings++
+  }
+}
+
+// Add multi-method annotations
+for (const { path, method, tool } of MULTI_METHOD_ANNOTATIONS) {
+  const pathObj = spec.paths[path]
+  if (pathObj?.[method]) {
+    pathObj[method]['x-speakeasy-mcp'] = tool
+  } else {
+    console.warn(`WARNING: Multi-method tool path not found: ${method.toUpperCase()} ${path}`)
     warnings++
   }
 }
@@ -104,6 +125,7 @@ for (const { path, method } of DISABLED_ENTRIES) {
 // Disable any remaining unannotated endpoints (catch-all for future routes)
 const annotatedPaths = new Set([
   ...Object.keys(TOOL_ANNOTATIONS),
+  ...MULTI_METHOD_ANNOTATIONS.map((e) => e.path),
   ...DISABLED_ENTRIES.map((e) => e.path),
 ])
 for (const [path, methods] of Object.entries(spec.paths)) {
@@ -116,12 +138,16 @@ for (const [path, methods] of Object.entries(spec.paths)) {
 }
 
 // Validate expected tool count
-const uniqueTools = new Set(Object.values(TOOL_ANNOTATIONS).map((c) => c.tool['tool-name']))
-if (uniqueTools.size !== 9) {
-  console.error(`ERROR: Expected 9 unique tools, found ${uniqueTools.size}`)
+const uniqueTools = new Set([
+  ...Object.values(TOOL_ANNOTATIONS).map((c) => c.tool['tool-name']),
+  ...MULTI_METHOD_ANNOTATIONS.map((c) => c.tool['tool-name']),
+])
+const totalAnnotated = Object.keys(TOOL_ANNOTATIONS).length + MULTI_METHOD_ANNOTATIONS.length
+if (uniqueTools.size !== 12) {
+  console.error(`ERROR: Expected 12 unique tools, found ${uniqueTools.size}`)
   process.exit(1)
 }
 
 writeFileSync(specPath, JSON.stringify(spec, null, 2))
-console.log(`Annotated ${Object.keys(TOOL_ANNOTATIONS).length} endpoints → ${uniqueTools.size} unique tools, disabled remaining endpoints`)
+console.log(`Annotated ${totalAnnotated} endpoints → ${uniqueTools.size} unique tools, disabled remaining endpoints`)
 if (warnings > 0) process.exit(1)

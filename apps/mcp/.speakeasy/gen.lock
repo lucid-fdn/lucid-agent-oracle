@@ -1,16 +1,16 @@
 lockVersion: 2.0.0
 id: d05bf862-8466-41bb-b4bf-6c46f9ba077a
 management:
-  docChecksum: 8ff766c2a255901f155318afb61f0d04
+  docChecksum: 0f35d8be9e42030bf3271234f3409f9d
   docVersion: 1.0.0
   speakeasyVersion: 1.753.0
   generationVersion: 2.862.0
-  releaseVersion: 0.0.1
-  configChecksum: fa9b4b0771663fa2e9043890c3e5e40b
+  releaseVersion: 0.0.2
+  configChecksum: adcc159f960a85950b57d278085dc554
 persistentEdits:
-  generation_id: 0f6f0e28-3ad6-4c74-85ac-e4830a0cde95
-  pristine_commit_hash: 2f5b2e0795b518addbfb4363791098995b12ae2b
-  pristine_tree_hash: 94afbc738828da33b7bd7772e6d597c93b7971ca
+  generation_id: 8273d7b1-ea52-4058-8c7c-3cc72e3af049
+  pristine_commit_hash: 70bac7069f87d62ef6a91e39a7d0a83667f7eadd
+  pristine_tree_hash: b7d781b9ab5b05400353bd4cbc7a2c7e423917d2
 features:
   mcp-typescript:
     additionalDependencies: 0.1.0
@@ -45,12 +45,12 @@ trackedFiles:
     pristine_git_object: 4f9e60a9462fc4def738d60c3aaadf8232ef185f
   manifest.json:
     id: ca642a226869
-    last_write_checksum: sha1:5569b26eac2aa5465043311579281139a948aa28
-    pristine_git_object: 4377556295275c0f17e8a5eaafeab7816b85b7af
+    last_write_checksum: sha1:6b583c2be639fcd9bfa8919d06fc6d24e74bb469
+    pristine_git_object: 4d2f8070af6e18c15706c0f48edf08338608c5e7
   package.json:
     id: 7030d0b2f71b
-    last_write_checksum: sha1:25bb0451f568fe5b374b79ed8c830b2fc1fa60a3
-    pristine_git_object: 5db3a3a9003530dced83b511f53b90d82c03bd28
+    last_write_checksum: sha1:6fe5b1e14080dfe4c5913f2db6c5e990baf55b15
+    pristine_git_object: 5d62622a1620178a39bb36812ff7592691d9f139
   src/core.ts:
     id: f431fdbcd144
     last_write_checksum: sha1:ce840032c45608f5f4022b32bcce32cb69c5ed26
@@ -79,6 +79,18 @@ trackedFiles:
     id: 25aa9158797f
     last_write_checksum: sha1:b1fe6c9aa7c9e9007de1bfc676f4d6638c35812b
     pristine_git_object: e1a4cf2fb52d8cf163c061264e2683cc39a25c86
+  src/funcs/alertsDeleteV1OracleAlertsId.ts:
+    id: 337fc606b7d3
+    last_write_checksum: sha1:93ec36f62811b5dbb406f9b8478e8c8b37070358
+    pristine_git_object: 5145207cc767b87f7878cfc911716d0897263328
+  src/funcs/alertsGetV1OracleAlerts.ts:
+    id: 221e270cb3be
+    last_write_checksum: sha1:b3d3b82d8f02c2358082d7312775179e0d7125f5
+    pristine_git_object: 48a33ecf7854a6817818c148feb41fb5bb026818
+  src/funcs/alertsPostV1OracleAlerts.ts:
+    id: 61e3508cebf6
+    last_write_checksum: sha1:379a4886422b06d2f5734351d86882e8ef867e8d
+    pristine_git_object: 27add9a4ef390ac73b4aeacfadc42436ae6d05a8
   src/funcs/feedsGetV1OracleFeeds.ts:
     id: ead814a39730
     last_write_checksum: sha1:0a23418eb28f08919ab1159b3a89054151f17a8d
@@ -115,6 +127,14 @@ trackedFiles:
     id: 0ad052ea13cf
     last_write_checksum: sha1:850e065b7b15a9596ef55f11e1740ab16de20fe9
     pristine_git_object: c0b9f8e06b0df25125f1e84b490b825eb0e5eee5
+  src/funcs/streamingGetV1OracleStream.ts:
+    id: d9ba19ffd19e
+    last_write_checksum: sha1:8a9f7d887d3508e699d6368541abcfdf7359cb1d
+    pristine_git_object: 087a14bc4d121e035e10f4fe30fe00666900e3d9
+  src/funcs/streamingPostV1OracleStreamToken.ts:
+    id: f79a1be73d33
+    last_write_checksum: sha1:b30cd49f1ea41083fa205b2d5925fb1e98a06cff
+    pristine_git_object: fbde601505fc47a87193f923b8423da1fa807c33
   src/hooks/hooks.ts:
     id: a2463fc6f69b
     last_write_checksum: sha1:327ed0fa581be991d633155a30a13e502caa80ef
@@ -133,8 +153,8 @@ trackedFiles:
     pristine_git_object: d4bd8b341290e7a828a171d840bd0b0fff7c7cd7
   src/lib/config.ts:
     id: 320761608fb3
-    last_write_checksum: sha1:0ec0451878db40c525b214199a1bbf1bd9d5eff8
-    pristine_git_object: ac2fb3fec64f1c8cdd77b5531a4852ff60d4f37e
+    last_write_checksum: sha1:c71723440498a847847635ea8955e6fb8fd52bff
+    pristine_git_object: 7011f345a6f04a34821a3f1008d9509828920ff8
   src/lib/dlv.ts:
     id: b1988214835a
     last_write_checksum: sha1:1dd3e3fbb4550c4bf31f5ef997faff355d6f3250
@@ -225,8 +245,8 @@ trackedFiles:
     pristine_git_object: a115fef7bfc73266383e67f1c1312d31742e7de7
   src/mcp-server/mcp-server.ts:
     id: aabbc4ab07c1
-    last_write_checksum: sha1:6d4719e3e2a858d323dd23b113461625af60962a
-    pristine_git_object: 5cbc4d82567cd17b91a0f3ed3d944b448523c69a
+    last_write_checksum: sha1:48b132d86040a131b63f6ca93ceb876a51f46635
+    pristine_git_object: a97bfc6bd1c6b011bd88e1dbbf52d380a0daf7e2
   src/mcp-server/prompts.ts:
     id: 26f3d73cbf31
     last_write_checksum: sha1:d5928503611775dde2dcc5272e35f8065b35b920
@@ -241,8 +261,8 @@ trackedFiles:
     pristine_git_object: c25696d4c4f70e081fa5d87ad6891874c509a577
   src/mcp-server/server.ts:
     id: 2784dd48e82a
-    last_write_checksum: sha1:36e9a343acc1db07275428e1e71ebad42870c9fa
-    pristine_git_object: a7cfeaf40450f14e73ac8b9cd36bdc768de7cd7d
+    last_write_checksum: sha1:da7e1ab304d96f1f4a9ee6d9543c99948a687c3f
+    pristine_git_object: a9988bcaf2ec5200c0bd8f2b6dcfa2b2f262f26e
   src/mcp-server/shared.ts:
     id: 074e80d4be1e
     last_write_checksum: sha1:19c9034032819a14f15c430de4350c8aba99d725
@@ -271,6 +291,18 @@ trackedFiles:
     id: ceb69304804e
     last_write_checksum: sha1:255c8542ae81a8074dc11f8e9fa05302b44cd133
     pristine_git_object: eaba8b4786fa464eba70faccc07865d167b3d2ce
+  src/mcp-server/tools/alertsDeleteV1OracleAlertsId.ts:
+    id: a604a3a615f5
+    last_write_checksum: sha1:d66b1ae89654f3b4cdfc80f9b083586b1b22264e
+    pristine_git_object: a1e558163211f70083293e0e3679f31776a49331
+  src/mcp-server/tools/alertsGetV1OracleAlerts.ts:
+    id: 3458b7274cd0
+    last_write_checksum: sha1:fa68ac9885d3d6cf73d2acf7a3dfb52ad7637127
+    pristine_git_object: 723f4b7ea4b1162f9f2da944cfa5d2f5eecc8aab
+  src/mcp-server/tools/alertsPostV1OracleAlerts.ts:
+    id: f28be90060d1
+    last_write_checksum: sha1:35ea019a39025321f84425d92a0ffd08b20894f0
+    pristine_git_object: 4e2d031a7d3728fadf573f1eeee175679f10245f
   src/mcp-server/tools/feedsGetV1OracleFeeds.ts:
     id: 3fff767e7bbc
     last_write_checksum: sha1:2afb41e6068958ae8573453fe4e7fa5a3c68beed
@@ -303,6 +335,10 @@ trackedFiles:
     id: ba9dee2d56b2
     last_write_checksum: sha1:1d05bee6e71c8c506fa2ef234db1d844d3e737c0
     pristine_git_object: 6124cbb0f500c80fcc5fa83b9f89c2754149aa97
+  src/models/deletev1oraclealertsidop.ts:
+    id: e5331ae5a456
+    last_write_checksum: sha1:7196f1dd4958afbdb97039f0da83b587be5866cf
+    pristine_git_object: 3dac87ea72ad7b7e0f9f3caf7d4b4968d46e75e1
   src/models/errors/apierror.ts:
     id: e2280e075454
     last_write_checksum: sha1:1a4199dec47757c19b2e88dbd767d7f24ab9522a
@@ -339,6 +375,10 @@ trackedFiles:
     id: 31c4d00f5e55
     last_write_checksum: sha1:c2f24b221455b08d13c2201aa1e0edf69a3f49e0
     pristine_git_object: 10536f83598f5542127490cb45ac33beba8a4190
+  src/models/getv1oraclealertsop.ts:
+    id: 4e0f76285c31
+    last_write_checksum: sha1:d97d281f30e59d8f393b7f3473fdcac3899b70ea
+    pristine_git_object: 51624b51a535a1dba3f624ef880776b9781e7d6a
   src/models/getv1oraclefeedsidhistoryop.ts:
     id: f807006b6282
     last_write_checksum: sha1:c45f6dc96fe9c5e8caae14b1b5c2f95b35fe5df5
@@ -371,10 +411,22 @@ trackedFiles:
     id: ec886475f69a
     last_write_checksum: sha1:a3d0b305a6b008afc964e2e35e1502bb50974e8f
     pristine_git_object: 2b932532ec97344c6231db341ff6bf520c836884
+  src/models/getv1oraclestreamop.ts:
+    id: 2f6fed263420
+    last_write_checksum: sha1:bcf0e027e0ffe5a48a56c5208c43fd8a04df4bbc
+    pristine_git_object: c8d73171a74dac3914565ba39855b8a915141f25
+  src/models/postv1oraclealertsop.ts:
+    id: 96caa05914d1
+    last_write_checksum: sha1:87413e9c06d1f6da5791b682a3eb0fbd9a8a2145
+    pristine_git_object: 9f8f502d7d6ccfead46ee9f9fc51f766d3ff8468
   src/models/postv1oraclereportsverifyop.ts:
     id: 968f1fe85d5c
     last_write_checksum: sha1:f731041520020794219df17046e59be9aaf83498
     pristine_git_object: f97fb4efc65907bb464d4984d774ce6416c62cbe
+  src/models/postv1oraclestreamtokenop.ts:
+    id: e28664a28232
+    last_write_checksum: sha1:2d1e591cf269eb2cafea93fd61560877c950a29a
+    pristine_git_object: 753c8bbf1d7c2f85b79a66343aa899de48509f94
   src/models/security.ts:
     id: d90c6c784ca5
     last_write_checksum: sha1:fd562b466dd2b016a3c24851d6653595c1682cc4
@@ -550,4 +602,45 @@ examples:
           application/json: {"data": {"protocol_id": "<id>", "agents": {"total": 798207, "by_link_type": {"key": 146143, "key1": 151836, "key2": 477990}}, "wallets": {"total": 44806, "by_chain": {"key": 126775, "key1": 901185, "key2": 955324}}, "evidence": {"total": 292419, "by_type": {"key": 471110, "key1": 984400, "key2": 132979}}, "recent_registrations_7d": 463406, "active_conflicts": 830380}}
         "403":
           application/json: {"type": "<value>", "title": "<value>", "status": 70118}
+  post_/v1/oracle/stream/token:
+    speakeasy-default-post-/v1-/oracle/stream/token:
+      responses:
+        "200":
+          application/json: {"token": "<value>", "expiresIn": 169705}
+        "403":
+          application/json: {"type": "<value>", "title": "<value>", "status": 823779}
+  get_/v1/oracle/stream:
+    speakeasy-default-get-/v1-/oracle/stream:
+      parameters:
+        query:
+          channels: "<value>"
+      responses:
+        "400":
+          application/json: {"type": "<value>", "title": "<value>", "status": 85366}
+        "503":
+          application/json: {"type": "<value>", "title": "<value>", "status": 85366}
+  post_/v1/oracle/alerts:
+    speakeasy-default-post-/v1-/oracle/alerts:
+      requestBody:
+        application/json: {"channel": "agent_events", "url": "https://agile-recommendation.name"}
+      responses:
+        "201":
+          application/json: {"subscription": {"id": "<id>", "channel": "agent_events", "url": "https://worthwhile-fedora.biz", "active": true, "created_at": "1735378526682"}, "secret": "<value>"}
+        "400":
+          application/json: {"type": "<value>", "title": "<value>", "status": 315730}
+  get_/v1/oracle/alerts:
+    speakeasy-default-get-/v1-/oracle/alerts:
+      responses:
+        "200":
+          application/json: {"data": [{"id": "<id>", "channel": "reports", "url": "https://indolent-gym.biz", "active": false, "created_at": "1735078842895"}]}
+        "403":
+          application/json: {"type": "<value>", "title": "<value>", "status": 626269}
+  delete_/v1/oracle/alerts/{id}:
+    speakeasy-default-delete-/v1-/oracle/alerts/{id}:
+      parameters:
+        path:
+          id: "<id>"
+      responses:
+        "403":
+          application/json: {"type": "<value>", "title": "<value>", "status": 557484}
 examplesVersion: 1.0.2

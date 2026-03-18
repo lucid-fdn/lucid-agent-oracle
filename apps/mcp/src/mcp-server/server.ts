@@ -18,6 +18,9 @@ import { tool$agentsGetV1OracleAgentsIdActivity } from "./tools/agentsGetV1Oracl
 import { tool$agentsGetV1OracleAgentsIdMetrics } from "./tools/agentsGetV1OracleAgentsIdMetrics.js";
 import { tool$agentsGetV1OracleAgentsModelUsage } from "./tools/agentsGetV1OracleAgentsModelUsage.js";
 import { tool$agentsGetV1OracleAgentsSearch } from "./tools/agentsGetV1OracleAgentsSearch.js";
+import { tool$alertsDeleteV1OracleAlertsId } from "./tools/alertsDeleteV1OracleAlertsId.js";
+import { tool$alertsGetV1OracleAlerts } from "./tools/alertsGetV1OracleAlerts.js";
+import { tool$alertsPostV1OracleAlerts } from "./tools/alertsPostV1OracleAlerts.js";
 import { tool$feedsGetV1OracleFeeds } from "./tools/feedsGetV1OracleFeeds.js";
 import { tool$feedsGetV1OracleFeedsId } from "./tools/feedsGetV1OracleFeedsId.js";
 import { tool$feedsGetV1OracleFeedsIdHistory } from "./tools/feedsGetV1OracleFeedsIdHistory.js";
@@ -38,7 +41,7 @@ export function createMCPServer(deps: {
 }) {
   const server = new McpServer({
     name: "SDK",
-    version: "0.0.1",
+    version: "0.0.2",
   });
 
   const getClient = deps.getSDK || (() =>
@@ -94,6 +97,9 @@ export function createMCPServer(deps: {
   tool(tool$agentsGetV1OracleAgentsIdActivity);
   tool(tool$protocolsGetV1OracleProtocols);
   tool(tool$protocolsGetV1OracleProtocolsId);
+  tool(tool$alertsPostV1OracleAlerts);
+  tool(tool$alertsGetV1OracleAlerts);
+  tool(tool$alertsDeleteV1OracleAlertsId);
 
   if (deps.dynamic) {
     registerDynamicTools(deps.logger, server, getClient, toolMap, scopes);
