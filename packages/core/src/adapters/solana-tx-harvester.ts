@@ -56,8 +56,7 @@ export async function harvestSolanaTransactions(
   try {
     const lockResult = await client.query("SELECT pg_try_advisory_lock(hashtext('solana_tx_harvester'))")
     if (!lockResult.rows[0].pg_try_advisory_lock) {
-      client.release()
-      return 0
+      return 0 // finally block handles client.release()
     }
 
     // Load Solana wallets
