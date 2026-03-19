@@ -176,12 +176,14 @@ async function handleMetadataSet(
   }
 
   // Store in metadata_json keyed by human-readable name
+  // Build JSON in JS to avoid PgBouncer type inference issues with jsonb_build_object params
+  const metaPatch = JSON.stringify({ [keyName || event.key_hash || 'unknown']: decodedValue })
   await db.query(
     `UPDATE oracle_agent_entities
-     SET metadata_json = COALESCE(metadata_json, '{}'::jsonb) || jsonb_build_object($1::text, $2::text),
+     SET metadata_json = COALESCE(metadata_json, '{}'::jsonb) || $1::jsonb,
          updated_at = now()
-     WHERE id = $3`,
-    [keyName || event.key_hash || 'unknown', decodedValue, entityId],
+     WHERE id = $2`,
+    [metaPatch, entityId],
   )
 }
 
