@@ -1,12 +1,57 @@
-# Agent Universe Dashboard — Implementation Plan
+# Agent Universe Dashboard — Roadmap & Phase A Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a viral, Bloomberg-terminal-style agent economy dashboard with maximum data enrichment — token balances, live activity feed, network graph, multiple leaderboards, ENS resolution, Olas enrichment, NFTs, DeFi positions, gas metrics, contract analysis, comparison mode, and global economy metrics.
+**Goal:** Build a trustworthy, data-rich agent economy dashboard. Phase A ships the core reliable product. Enrichment and visualization layers follow only after the core is solid.
 
 **Architecture:** Three-layer approach: (1) Backend data enrichment services that poll/compute and store in Supabase, (2) Oracle API endpoints that serve enriched data, (3) Next.js dashboard components that consume and visualize. Each layer is independently deployable and testable.
 
-**Tech Stack:** Node.js/TypeScript, Fastify, Supabase (Postgres), ClickHouse, Redis Pub/Sub, SSE, Next.js 15, React Three Fiber (3D graph), Recharts (charts), SWR, Tailwind CSS, QuickNode RPC, Moralis, Helius.
+**Tech Stack:** Node.js/TypeScript, Fastify, Supabase (Postgres), ClickHouse, Redis Pub/Sub, SSE, Next.js 15, Recharts (charts), SWR, Tailwind CSS, QuickNode RPC, Moralis, Helius.
+
+---
+
+## Roadmap — Three Phases
+
+### Phase A — Core Reliable Dashboard (NOW)
+Ship only things that make the product clearly useful and trustworthy.
+Every number shown has a clear data source and known freshness.
+
+| Task | What | Why Core |
+|------|------|----------|
+| 1 | Migration (balances + economy tables) | Foundation |
+| 2 | Token balance enricher | Core truth — what agents hold |
+| 6 | Economy metrics computer | Global economy numbers |
+| 7 | Enriched agent profile API | All core data in one response |
+| 8 | Economy metrics API | TVL, volume, trends endpoint |
+| 9 | Multiple leaderboards + comparison API | Engagement, ranking |
+| 10 | Economy overview page | Bloomberg-style landing |
+| 11 | Leaderboard tabs | Multiple ranking views |
+| 12 | Enriched agent profile page | Full agent detail |
+| 14 | Live activity feed (SSE) | "Alive" feeling |
+| 17 | Nav upgrade | Polish |
+
+### Phase B — Premium Enrichment (LATER)
+Valuable data, not necessary to prove the product.
+
+| Task | What |
+|------|------|
+| 3 | ENS/Basename resolution |
+| 4 | Olas marketplace enrichment |
+| 5 | NFTs + Gas metrics + Contract analysis |
+| 5b | DeFi positions |
+| 16 | Agent-to-agent transaction discovery |
+
+### Phase C — Viral Visualization (FUTURE)
+The "window into a new civilization" — only after A+B are solid.
+
+| Task | What |
+|------|------|
+| 13 | Agent comparison mode (side-by-side) |
+| 15 | 3D force-directed network graph |
+| — | Shareable agent cards (OG images) |
+| — | Universe-style landing animation |
+
+**This plan implements Phase A only.**
 
 ---
 
