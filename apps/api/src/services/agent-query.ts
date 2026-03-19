@@ -179,18 +179,23 @@ export class AgentQueryService {
       ),
       this.db.query(
         `SELECT COUNT(*)::int AS cnt
-         FROM oracle_identity_evidence
-         WHERE agent_entity = $1 AND revoked_at IS NULL`,
+         FROM oracle_agent_feedback
+         WHERE agent_entity = $1`,
         [id],
       ),
     ])
+
+    const meta = entity.metadata_json as Record<string, unknown> | null
+    const repJson = entity.reputation_json as Record<string, unknown> | null
 
     return {
       id: entity.id as string,
       display_name: (entity.display_name as string) ?? null,
       erc8004_id: (entity.erc8004_id as string) ?? null,
       lucid_tenant: (entity.lucid_tenant as string) ?? null,
-      reputation_json: (entity.reputation_json as Record<string, unknown>) ?? null,
+      agent_uri: (entity.agent_uri as string) ?? null,
+      metadata_json: meta ?? null,
+      reputation_json: repJson ?? null,
       reputation_updated_at: entity.reputation_updated_at
         ? String(entity.reputation_updated_at)
         : null,
@@ -208,7 +213,7 @@ export class AgentQueryService {
         link_type: r.link_type as string,
         confidence: r.confidence as number,
       })),
-      evidence_count: (evidenceResult.rows[0]?.cnt as number) ?? 0,
+      feedback_count: (evidenceResult.rows[0]?.cnt as number) ?? 0,
     }
   }
 

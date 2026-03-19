@@ -266,24 +266,21 @@ export function registerAgentRoutes(
       })
     }
 
-    // Map service shape to API shape
-    const reputation = agent.reputation_json && agent.reputation_updated_at
-      ? { score: (agent.reputation_json as Record<string, unknown>).score as number ?? 0, updated_at: agent.reputation_updated_at }
-      : null
-
     return reply.send({
       data: {
         id: agent.id,
         display_name: agent.display_name,
         erc8004_id: agent.erc8004_id,
         lucid_tenant: agent.lucid_tenant,
-        reputation,
+        agent_uri: agent.agent_uri,
+        metadata_json: agent.metadata_json,
+        reputation_json: agent.reputation_json,
         wallets: agent.wallets,
         protocols: agent.identity_links,
         stats: {
           wallet_count: agent.wallets.length,
           protocol_count: agent.identity_links.length,
-          evidence_count: agent.evidence_count,
+          feedback_count: agent.feedback_count,
         },
         created_at: agent.created_at,
         updated_at: agent.updated_at,

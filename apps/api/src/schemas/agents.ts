@@ -45,19 +45,15 @@ export const AgentProfile = Type.Object(
     display_name: Type.Union([Type.String(), Type.Null()]),
     erc8004_id: Type.Union([Type.String(), Type.Null()]),
     lucid_tenant: Type.Union([Type.String(), Type.Null()]),
-    reputation: Type.Union([
-      Type.Object({
-        score: Type.Number(),
-        updated_at: Type.String(),
-      }),
-      Type.Null(),
-    ]),
+    agent_uri: Type.Union([Type.String(), Type.Null()]),
+    metadata_json: Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()]),
+    reputation_json: Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()]),
     wallets: Type.Array(Wallet),
     protocols: Type.Array(IdentityLink),
     stats: Type.Object({
       wallet_count: Type.Integer(),
       protocol_count: Type.Integer(),
-      evidence_count: Type.Integer(),
+      feedback_count: Type.Integer(),
     }),
     created_at: Type.String(),
     updated_at: Type.String(),
