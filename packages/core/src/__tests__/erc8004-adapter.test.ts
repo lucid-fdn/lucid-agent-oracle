@@ -23,20 +23,17 @@ describe('erc8004Adapter identity handler', () => {
 
     await handler.handleEvent(event, db, null)
 
-    // Should create entity
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO oracle_agent_entities'),
       expect.arrayContaining([expect.stringContaining('ae_'), '42']),
     )
-    // Should update agent_uri
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE oracle_agent_entities SET agent_uri'),
       expect.arrayContaining(['https://example.com/agent.json']),
     )
-    // Should create owner wallet mapping
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO oracle_wallet_mappings'),
-      expect.arrayContaining(['0xOwner', 'erc8004_owner']),
+      expect.arrayContaining(['0xOwner', 'onchain_proof']),
     )
   })
 
@@ -44,14 +41,12 @@ describe('erc8004Adapter identity handler', () => {
     const db = mockDb()
     db.query.mockResolvedValueOnce({ rows: [{ id: 'ae_existing' }] })
 
-    const event = {
+    await handler.handleEvent({
       event_type: 'uri_updated',
       agent_id: '42',
       agent_uri: 'https://new-uri.com/agent.json',
       owner_address: '0xOwner',
-    }
-
-    await handler.handleEvent(event, db, null)
+    }, db, null)
 
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE oracle_agent_entities SET agent_uri'),
@@ -59,22 +54,44 @@ describe('erc8004Adapter identity handler', () => {
     )
   })
 
-  it('handles metadata_set by accumulating JSONB', async () => {
+  it('handles metadata_set with agentWallet — decodes address and creates wallet mapping', async () => {
     const db = mockDb()
     db.query.mockResolvedValueOnce({ rows: [{ id: 'ae_existing' }] })
 
-    const event = {
+    await handler.handleEvent({
       event_type: 'metadata_set',
       agent_id: '42',
-      key_hash: '0xabcdef',
-      value: 'some-value',
-    }
+      key_hash: '0x2ac6109326e720d1',
+      value: 'agentWallet',
+      data: '0x00000000000000000000000067722c823010ceb4bed5325fe109196c0f67d053',
+    }, db, null)
 
-    await handler.handleEvent(event, db, null)
+    // Should create wallet mapping from decoded address
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO oracle_wallet_mappings'),
+      expect.arrayContaining(['0x67722c823010ceb4bed5325fe109196c0f67d053', 'onchain_proof']),
+    )
+    // Should store in metadata_json
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('metadata_json'),
+      expect.arrayContaining(['agentWallet']),
+    )
+  })
+
+  it('handles metadata_set with ecosystem — stores decoded string', async () => {
+    const db = mockDb()
+    db.query.mockResolvedValueOnce({ rows: [{ id: 'ae_existing' }] })
+
+    await handler.handleEvent({
+      event_type: 'metadata_set',
+      agent_id: '42',
+      value: 'ecosystem',
+      data: '0x4f6c617300000000000000000000000000000000000000000000000000000000',
+    }, db, null)
 
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining('metadata_json'),
-      expect.arrayContaining(['0xabcdef', 'some-value', 'ae_existing']),
+      expect.arrayContaining(['ecosystem', 'Olas']),
     )
   })
 
@@ -82,25 +99,21 @@ describe('erc8004Adapter identity handler', () => {
     const db = mockDb()
     db.query.mockResolvedValueOnce({ rows: [{ id: 'ae_existing' }] })
 
-    const event = {
+    await handler.handleEvent({
       event_type: 'ownership_transferred',
       agent_id: '42',
       previous_owner: '0xOldOwner',
       new_owner: '0xNewOwner',
       tx_hash: '0xdef',
-    }
+    }, db, null)
 
-    await handler.handleEvent(event, db, null)
-
-    // Should soft-delete old owner mapping
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE oracle_wallet_mappings SET removed_at'),
       expect.arrayContaining(['0xOldOwner']),
     )
-    // Should upsert new owner wallet mapping
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO oracle_wallet_mappings'),
-      expect.arrayContaining(['0xNewOwner', 'erc8004_owner']),
+      expect.arrayContaining(['0xNewOwner', 'onchain_proof']),
     )
   })
 })

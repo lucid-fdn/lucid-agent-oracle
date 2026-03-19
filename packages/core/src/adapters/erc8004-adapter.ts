@@ -31,7 +31,7 @@ const erc8004IdentityHandler: IdentityHandler = {
       case 'uri_updated':
         return handleURIUpdated(event, db)
       case 'metadata_set':
-        return handleMetadataSet(event, db)
+        return handleMetadataSet(event, db, producer)
       case 'ownership_transferred':
         return handleOwnershipTransferred(event, db, producer)
     }
@@ -104,9 +104,38 @@ async function handleURIUpdated(
   )
 }
 
+/**
+ * Decode an Ethereum address from ABI-encoded bytes.
+ * The data field is hex-encoded, address is last 20 bytes (left-padded to 32).
+ */
+function decodeAddressFromBytes(hexData: string): string | null {
+  const clean = hexData.replace(/^0x/, '')
+  if (clean.length < 40) return null
+  const addr = '0x' + clean.slice(-40).toLowerCase()
+  if (addr === '0x' + '0'.repeat(40)) return null // zero address
+  return addr
+}
+
+/**
+ * Decode a UTF-8 string from ABI-encoded bytes.
+ * For simple cases: strip zero-padding and decode hex to string.
+ */
+function decodeBytesToString(hexData: string): string {
+  const clean = hexData.replace(/^0x/, '')
+  // Try direct UTF-8 decode (strip trailing zeros)
+  const bytes = Buffer.from(clean, 'hex')
+  // Find first null byte or end
+  let end = bytes.length
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0) { end = i; break }
+  }
+  return bytes.subarray(0, end).toString('utf8').trim()
+}
+
 async function handleMetadataSet(
   event: Record<string, any>,
   db: DbClient,
+  producer: RedpandaProducer | null,
 ): Promise<void> {
   const agentId = String(event.agent_id)
   const existing = await db.query(
@@ -114,14 +143,43 @@ async function handleMetadataSet(
     [agentId],
   )
   if (existing.rows.length === 0) return
+  const entityId = existing.rows[0].id as string
 
-  // Store metadata as JSONB — accumulate key/value pairs
+  const keyName = event.value ?? '' // key name string (e.g. "agentWallet")
+  const data = event.data as string | undefined
+
+  // agentWallet: decode address from bytes → create wallet mapping
+  if (keyName === 'agentWallet' && data && data.length > 2) {
+    const walletAddress = decodeAddressFromBytes(data)
+    if (walletAddress) {
+      await upsertWalletMapping(db, entityId, 'base', walletAddress, 'onchain_proof', event.tx_hash ?? '')
+      await publishWatchlistUpdate(producer, 'add', 'base', walletAddress, entityId)
+    }
+  }
+
+  // Decode the data field for storage
+  let decodedValue = ''
+  if (data && data.length > 2) {
+    if (keyName === 'agentWallet' || keyName === 'serviceRegistry') {
+      decodedValue = decodeAddressFromBytes(data) ?? data
+    } else if (keyName === 'ecosystem') {
+      decodedValue = decodeBytesToString(data) || data
+    } else if (keyName === 'serviceId') {
+      // serviceId is a uint256 encoded as bytes
+      const n = parseInt(data.replace(/^0x0*/, ''), 16)
+      decodedValue = isNaN(n) ? data : String(n)
+    } else {
+      decodedValue = data
+    }
+  }
+
+  // Store in metadata_json keyed by human-readable name
   await db.query(
     `UPDATE oracle_agent_entities
      SET metadata_json = COALESCE(metadata_json, '{}'::jsonb) || jsonb_build_object($1, $2),
          updated_at = now()
      WHERE id = $3`,
-    [event.key_hash ?? 'unknown', event.value ?? '', existing.rows[0].id],
+    [keyName || event.key_hash || 'unknown', decodedValue, entityId],
   )
 }
 

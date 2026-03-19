@@ -15,6 +15,8 @@ import {
   mountWebhookRoutes,
   createAdapterSink,
   startResolverPoller,
+  startURIResolver,
+  startTxHarvester,
   dispatchIdentityEvent,
   getIdentityTopics,
   adapterRegistry,
@@ -297,6 +299,21 @@ if (databaseUrl) {
     { pollIntervalMs: parseInt(process.env.RESOLVER_POLL_INTERVAL_MS ?? '5000', 10), batchSize: 100 },
   )
   app.log.info('Resolver poller started (processes adapter staging events)')
+
+  // URI Resolver — fetches agent registration JSON files, extracts services/wallets
+  const uriResolverPool = new (await import('pg')).default.Pool({ connectionString: databaseUrl })
+  startURIResolver(uriResolverPool)
+  app.log.info('URI resolver started (resolves agent registration files)')
+
+  // Base Transaction Harvester — indexes USDC transfers for resolved agent wallets
+  const baseRpcUrl = process.env.BASE_RPC_URL
+  if (baseRpcUrl) {
+    const txPool = new (await import('pg')).default.Pool({ connectionString: databaseUrl })
+    startTxHarvester(txPool, { intervalMs: 30_000, blockBatchSize: 2000, rpcUrl: baseRpcUrl })
+    app.log.info('Base TX harvester started (tracks agent wallet USDC transfers)')
+  } else {
+    app.log.warn('BASE_RPC_URL not set — transaction harvester disabled')
+  }
 
   // Plan 3A v2: Fail-fast on missing CURSOR_SECRET
   assertCursorSecret()

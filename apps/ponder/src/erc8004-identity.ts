@@ -47,14 +47,15 @@ ponder.on('IdentityRegistry:MetadataSet', async ({ event }) => {
   await writeERC8004Event({
     event_id: computeEventId('erc8004', 'base', event.transaction.hash, Number(event.log.logIndex)),
     source: 'erc8004',
-    source_adapter_ver: 2,
+    source_adapter_ver: 3,
     chain: 'base',
     event_type: 'metadata_set',
     event_timestamp: new Date(Number(event.block.timestamp) * 1000).toISOString(),
     payload_json: JSON.stringify({
       agent_id: event.args.agentId.toString(),
-      key_hash: event.args.keyHash, // keccak256 of the key string (indexed)
-      value: event.args.value,
+      key_hash: event.args.keyHash,
+      value: event.args.value,       // key name string (e.g. "agentWallet", "ecosystem")
+      data: event.args.data,          // actual value as hex bytes (e.g. wallet address)
     }),
     block_number: Number(event.block.number),
     tx_hash: event.transaction.hash,
