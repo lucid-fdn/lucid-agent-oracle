@@ -81,7 +81,7 @@ async function handleAgentRegistered(
   // Identity link
   await db.query(
     `INSERT INTO oracle_identity_links (agent_entity, protocol, protocol_id, link_type, confidence, evidence_json)
-     VALUES ($1, 'erc8004', $2, 'on_chain_proof', 1.0, $3)
+     VALUES ($1, 'erc8004', $2, 'onchain_proof', 1.0, $3)
      ON CONFLICT (protocol, protocol_id) DO NOTHING`,
     [entityId, agentId, JSON.stringify({ tx_hash: event.tx_hash, block: event.block_number })],
   )
