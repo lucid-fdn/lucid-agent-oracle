@@ -78,12 +78,14 @@ export default createConfig({
       address: '0x8004BAa17C55a88189AE136b182e5fdA19dE9b63',
       startBlock: 41_670_000,
     },
-    // USDC transfers on Base — filtered by watchlist in handler (only agent wallets)
-    BaseUSDC: {
-      network: 'base',
-      abi: ERC20_TRANSFER_ABI,
-      address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-      startBlock: 41_670_000, // Same start — only relevant after agents are registered
-    },
+    // USDC transfers on Base — DISABLED until agent wallets exist in watchlist.
+    // Indexing all USDC transfers is extremely expensive (millions of events/day,
+    // high RPC + DB cost). Enable only when watchlist has addresses to filter on.
+    // BaseUSDC: {
+    //   network: 'base',
+    //   abi: ERC20_TRANSFER_ABI,
+    //   address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    //   startBlock: 41_670_000,
+    // },
   },
 })
