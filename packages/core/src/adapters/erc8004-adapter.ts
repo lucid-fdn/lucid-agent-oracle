@@ -74,7 +74,7 @@ async function handleAgentRegistered(
 
   // Map owner wallet
   if (event.owner_address) {
-    await upsertWalletMapping(db, entityId, 'base', event.owner_address, 'erc8004_owner', event.tx_hash ?? '')
+    await upsertWalletMapping(db, entityId, 'base', event.owner_address, 'onchain_proof', event.tx_hash ?? '')
     await publishWatchlistUpdate(producer, 'add', 'base', event.owner_address, entityId)
   }
 
@@ -150,7 +150,7 @@ async function handleOwnershipTransferred(
 
   // Add new owner's wallet mapping
   if (event.new_owner) {
-    await upsertWalletMapping(db, entityId, 'base', event.new_owner, 'erc8004_owner', event.tx_hash ?? '')
+    await upsertWalletMapping(db, entityId, 'base', event.new_owner, 'onchain_proof', event.tx_hash ?? '')
     await publishWatchlistUpdate(producer, 'add', 'base', event.new_owner, entityId)
   }
 }
