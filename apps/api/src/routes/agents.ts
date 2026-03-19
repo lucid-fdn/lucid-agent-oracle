@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { Type } from '@sinclair/typebox'
 import type { DbClient, OracleClickHouse } from '@lucid/oracle-core'
 import { AgentQueryService } from '../services/agent-query.js'
 import {
@@ -406,6 +407,38 @@ export function registerAgentRoutes(
         limit,
       },
     })
+  })
+
+  // ---- GET /v1/oracle/agents/graph (Free) ----
+  // MUST be registered before /:id to avoid "graph" matching as :id param
+  app.get('/v1/oracle/agents/graph', {
+    schema: {
+      tags: ['agents'],
+      summary: 'Agent-to-agent transaction graph',
+      description: 'Discover agent-to-agent transactions by cross-referencing wallet transactions with wallet mappings.',
+      querystring: Type.Object({
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000, default: 500 })),
+      }),
+      response: {
+        200: Type.Object({
+          data: Type.Array(Type.Object({
+            from_agent: Type.String(),
+            to_agent: Type.String(),
+            tx_count: Type.Integer(),
+            total_usd: Type.Number(),
+          })),
+        }),
+      },
+    },
+    config: {
+      rateLimit: { max: 30 },
+    },
+  }, async (request, reply) => {
+    const query = request.query as { limit?: number }
+    const limit = query.limit ?? 500
+
+    const edges = await service.getAgentGraph(limit)
+    return reply.send({ data: edges })
   })
 
   // ---- GET /v1/oracle/agents/stats (Free) ----

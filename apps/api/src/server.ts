@@ -21,6 +21,10 @@ import {
   startMoralisClassifier,
   startBalanceEnricher,
   startEconomyMetrics,
+  startENSResolver,
+  startOlasEnricher,
+  startGasMetrics,
+  startContractAnalyzer,
   dispatchIdentityEvent,
   getIdentityTopics,
   adapterRegistry,
@@ -344,6 +348,28 @@ if (databaseUrl) {
   const metricsPool = new (await import('pg')).default.Pool({ connectionString: databaseUrl })
   startEconomyMetrics(metricsPool, { intervalMs: 60 * 60_000 })
   app.log.info('[metrics] Economy snapshot computer started (hourly)')
+
+  // Phase B: ENS / Basename resolver (requires MORALIS_API_KEY or BASE_RPC_URL)
+  if (moralisApiKey || baseRpcUrl) {
+    const ensPool = new (await import('pg')).default.Pool({ connectionString: databaseUrl })
+    startENSResolver(ensPool, { moralisApiKey, baseRpcUrl, intervalMs: 10 * 60_000, addressesPerCycle: 50 })
+    app.log.info('[enrichment] ENS/Basename resolver started (10min cycle)')
+  }
+
+  // Phase B: Olas Marketplace enricher (always runs — fetches Olas agent metadata)
+  const olasPool = new (await import('pg')).default.Pool({ connectionString: databaseUrl })
+  startOlasEnricher(olasPool, { intervalMs: 15 * 60_000, agentsPerCycle: 5, timeoutMs: 10_000 })
+  app.log.info('[enrichment] Olas marketplace enricher started (15min cycle)')
+
+  // Phase B: Gas / activity metrics computer
+  const gasPool = new (await import('pg')).default.Pool({ connectionString: databaseUrl })
+  startGasMetrics(gasPool, { intervalMs: 15 * 60_000 })
+  app.log.info('[enrichment] Gas metrics computer started (15min cycle)')
+
+  // Phase B: Contract interaction analyzer
+  const contractPool = new (await import('pg')).default.Pool({ connectionString: databaseUrl })
+  startContractAnalyzer(contractPool, { moralisApiKey, intervalMs: 15 * 60_000, resolveNames: !!moralisApiKey })
+  app.log.info('[enrichment] Contract interaction analyzer started (15min cycle)')
 
   // Plan 3A v2: Fail-fast on missing CURSOR_SECRET
   assertCursorSecret()

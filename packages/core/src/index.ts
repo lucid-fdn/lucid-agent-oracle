@@ -46,6 +46,10 @@ export { updatePositionLedger, getAgentRealizedDeltas } from './adapters/positio
 export { startMoralisClassifier, classifyWalletTransactions } from './adapters/moralis-classifier.js'
 export { startBalanceEnricher, enrichWalletBalances, type BalanceEnricherConfig } from './adapters/balance-enricher.js'
 export { startEconomyMetrics, computeEconomySnapshot, type EconomySnapshot, type EconomyMetricsConfig } from './adapters/economy-metrics.js'
+export { startENSResolver, resolveNames, type ENSResolverConfig, type NameResolution } from './adapters/ens-resolver.js'
+export { startOlasEnricher, enrichOlasAgents, type OlasEnricherConfig } from './adapters/olas-enricher.js'
+export { startGasMetrics, computeGasMetrics, getAgentGasMetrics, type GasMetricsConfig, type GasMetricsResult } from './adapters/gas-metrics.js'
+export { startContractAnalyzer, analyzeContractInteractions, getAgentContractInteractions, type ContractAnalyzerConfig, type ContractInteraction } from './adapters/contract-analyzer.js'
 
 // Identity verification (Plan 4B)
 export type { WalletVerifier } from './identity/wallet-verifier.js'

@@ -148,6 +148,13 @@ export interface ProtocolDetail {
   wallet_count: number
 }
 
+export interface AgentGraphEdge {
+  from_agent: string
+  to_agent: string
+  tx_count: number
+  total_usd: number
+}
+
 export interface ProtocolMetrics {
   id: string
   name: string
@@ -927,5 +934,34 @@ export class AgentQueryService {
       recent_registrations_7d: (recentResult.rows[0]?.cnt as number) ?? 0,
       active_conflicts: (conflictsResult.rows[0]?.cnt as number) ?? 0,
     }
+  }
+
+  // ---- getAgentGraph -------------------------------------------------------
+
+  async getAgentGraph(limit = 500): Promise<AgentGraphEdge[]> {
+    const { rows } = await this.db.query(
+      `SELECT
+         wt.agent_entity AS from_agent,
+         wm2.agent_entity AS to_agent,
+         COUNT(*)::int AS tx_count,
+         COALESCE(SUM(wt.amount_usd), 0)::numeric AS total_usd
+       FROM oracle_wallet_transactions wt
+       JOIN oracle_wallet_mappings wm2
+         ON LOWER(wt.counterparty) = LOWER(wm2.address)
+         AND wm2.chain = wt.chain
+         AND wm2.removed_at IS NULL
+       WHERE wt.direction = 'outbound'
+       GROUP BY wt.agent_entity, wm2.agent_entity
+       ORDER BY tx_count DESC
+       LIMIT $1::int`,
+      [limit],
+    )
+
+    return rows.map((r) => ({
+      from_agent: r.from_agent as string,
+      to_agent: r.to_agent as string,
+      tx_count: r.tx_count as number,
+      total_usd: Number(r.total_usd ?? 0),
+    }))
   }
 }
