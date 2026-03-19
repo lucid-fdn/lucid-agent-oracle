@@ -281,7 +281,10 @@ export class AgentQueryService {
     const limitParam = nextParam()
     values.push(limit + 1)
 
-    const dataSql = `SELECT DISTINCT ae.id, ae.display_name, ae.erc8004_id, ae.created_at
+    const dataSql = `SELECT DISTINCT ae.id, ae.display_name, ae.erc8004_id, ae.created_at,
+        (SELECT count(*) FROM oracle_wallet_mappings wm2 WHERE wm2.agent_entity = ae.id AND wm2.removed_at IS NULL) as wallet_count,
+        (SELECT count(*) FROM oracle_identity_links il2 WHERE il2.agent_entity = ae.id) as protocol_count,
+        (SELECT count(*) FROM oracle_agent_feedback fb WHERE fb.agent_entity = ae.id) as evidence_count
       FROM oracle_agent_entities ae ${joinClause} ${whereClause}
       ORDER BY ae.created_at DESC, ae.id DESC
       LIMIT ${limitParam}`
