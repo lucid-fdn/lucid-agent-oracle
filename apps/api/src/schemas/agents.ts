@@ -113,7 +113,13 @@ export const AgentSearchItem = Type.Object({
   created_at: Type.String(),
   wallet_count: Type.Number(),
   protocol_count: Type.Number(),
-  evidence_count: Type.Number(),
+  feedback_count: Type.Number(),
+  agent_uri: Type.Union([Type.String(), Type.Null()]),
+  description: Type.Union([Type.String(), Type.Null()]),
+  ecosystem: Type.Union([Type.String(), Type.Null()]),
+  active: Type.Union([Type.Boolean(), Type.Null()]),
+  services_count: Type.Number(),
+  reputation_score: Type.Union([Type.Number(), Type.Null()]),
 })
 
 export type AgentSearchItem = Static<typeof AgentSearchItem>

@@ -217,7 +217,7 @@ export class AgentQueryService {
     switch (sort) {
       case 'wallets': return 'wallet_count DESC'
       case 'protocols': return 'protocol_count DESC'
-      case 'evidence': return 'evidence_count DESC'
+      case 'evidence': return 'feedback_count DESC'
       default: return 'ae.created_at DESC'
     }
   }
@@ -300,9 +300,10 @@ export class AgentQueryService {
     if (useOffset) values.push(parseInt(String(params.cursorValue), 10) || 0)
 
     const dataSql = `SELECT DISTINCT ae.id, ae.display_name, ae.erc8004_id, ae.created_at,
+        ae.agent_uri, ae.metadata_json, ae.reputation_json,
         (SELECT count(*) FROM oracle_wallet_mappings wm2 WHERE wm2.agent_entity = ae.id AND wm2.removed_at IS NULL) as wallet_count,
         (SELECT count(*) FROM oracle_identity_links il2 WHERE il2.agent_entity = ae.id) as protocol_count,
-        (SELECT count(*) FROM oracle_agent_feedback fb WHERE fb.agent_entity = ae.id) as evidence_count
+        (SELECT count(*) FROM oracle_agent_feedback fb WHERE fb.agent_entity = ae.id) as feedback_count
       FROM oracle_agent_entities ae ${joinClause} ${whereClause}
       ORDER BY ${this.getSortClause(params.sort)}, ae.id DESC
       LIMIT ${limitParam} ${offsetClause}`
@@ -312,15 +313,26 @@ export class AgentQueryService {
     const hasMore = rows.length > limit
     const trimmed = hasMore ? rows.slice(0, limit) : rows
 
-    const data = trimmed.map((r) => ({
-      id: r.id as string,
-      display_name: (r.display_name as string) ?? null,
-      erc8004_id: (r.erc8004_id as string) ?? null,
-      created_at: String(r.created_at),
-      wallet_count: Number(r.wallet_count ?? 0),
-      protocol_count: Number(r.protocol_count ?? 0),
-      evidence_count: Number(r.evidence_count ?? 0),
-    }))
+    const data = trimmed.map((r) => {
+      const meta = r.metadata_json as Record<string, any> | null
+      const rep = r.reputation_json as Record<string, any> | null
+      const services = Array.isArray(meta?.services) ? meta.services : []
+      return {
+        id: r.id as string,
+        display_name: (r.display_name as string) ?? null,
+        erc8004_id: (r.erc8004_id as string) ?? null,
+        created_at: String(r.created_at),
+        wallet_count: Number(r.wallet_count ?? 0),
+        protocol_count: Number(r.protocol_count ?? 0),
+        feedback_count: Number(r.feedback_count ?? 0),
+        agent_uri: (r.agent_uri as string) ?? null,
+        description: (meta?.description as string) ?? null,
+        ecosystem: (meta?.ecosystem as string) ?? null,
+        active: meta?.active ?? null,
+        services_count: services.length,
+        reputation_score: rep?.avg_value ? Number(rep.avg_value) : null,
+      }
+    })
 
     const last = data[data.length - 1]
     // For non-default sort, cursor is offset-based (next page offset number)
