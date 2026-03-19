@@ -40,6 +40,8 @@ export { createAdapterSink, type SinkConfig } from './adapters/sink-factory.js'
 export { processAdapterEvents, startResolverPoller, type ResolverPollConfig, type IdentityDispatcher } from './adapters/resolver-poller.js'
 export { startURIResolver, resolveAgentURIs } from './adapters/uri-resolver.js'
 export { startTxHarvester, harvestBaseTransactions } from './adapters/base-tx-harvester.js'
+export { startSolanaTxHarvester, harvestSolanaTransactions } from './adapters/solana-tx-harvester.js'
+export { TokenRegistry } from './adapters/token-registry.js'
 
 // Identity verification (Plan 4B)
 export type { WalletVerifier } from './identity/wallet-verifier.js'

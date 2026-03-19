@@ -17,6 +17,7 @@ import {
   startResolverPoller,
   startURIResolver,
   startTxHarvester,
+  startSolanaTxHarvester,
   dispatchIdentityEvent,
   getIdentityTopics,
   adapterRegistry,
@@ -312,7 +313,17 @@ if (databaseUrl) {
     startTxHarvester(txPool, { intervalMs: 30_000, blockBatchSize: 2000, rpcUrl: baseRpcUrl })
     app.log.info('Base TX harvester started (tracks agent wallet USDC transfers)')
   } else {
-    app.log.warn('BASE_RPC_URL not set — transaction harvester disabled')
+    app.log.warn('BASE_RPC_URL not set — Base transaction harvester disabled')
+  }
+
+  // Solana Transaction Harvester — indexes agent wallet activity via Helius
+  const heliusApiKey = process.env.HELIUS_API_KEY
+  if (heliusApiKey) {
+    const solPool = new (await import('pg')).default.Pool({ connectionString: databaseUrl })
+    startSolanaTxHarvester(solPool, { intervalMs: 60_000, walletsPerCycle: 50, heliusApiKey })
+    app.log.info('Solana TX harvester started (tracks agent wallet activity via Helius)')
+  } else {
+    app.log.warn('HELIUS_API_KEY not set — Solana transaction harvester disabled')
   }
 
   // Plan 3A v2: Fail-fast on missing CURSOR_SECRET
