@@ -43,7 +43,7 @@ export interface SearchParams {
   protocol_id?: string
   erc8004_id?: string
   q?: string
-  sort?: 'newest' | 'wallets' | 'protocols' | 'evidence' | 'reputation_score'
+  sort?: 'newest' | 'wallets' | 'protocols' | 'evidence' | 'reputation_score' | 'smart'
   limit: number
   offset: number
   cursorValue?: string
@@ -224,6 +224,9 @@ export class AgentQueryService {
       case 'protocols': return 'protocol_count DESC'
       case 'evidence': return 'feedback_count DESC'
       case 'reputation_score': return 'reputation_score DESC NULLS LAST'
+      // Smart ranking: composite score weighting reputation, activity, and completeness
+      // Industry standard: weighted multi-factor ranking (similar to GitHub stars + forks + issues)
+      case 'smart': return 'smart_score DESC NULLS LAST'
       default: return 'ae.created_at DESC'
     }
   }
@@ -311,7 +314,15 @@ export class AgentQueryService {
         (SELECT count(*) FROM oracle_identity_links il2 WHERE il2.agent_entity = ae.id) as protocol_count,
         (SELECT count(*) FROM oracle_agent_feedback fb WHERE fb.agent_entity = ae.id) as feedback_count,
         CASE WHEN ae.reputation_json IS NOT NULL AND (ae.reputation_json->>'avg_value')::numeric <= 100
-             THEN (ae.reputation_json->>'avg_value')::numeric ELSE NULL END as reputation_score
+             THEN (ae.reputation_json->>'avg_value')::numeric ELSE NULL END as reputation_score,
+        (
+          COALESCE(CASE WHEN ae.reputation_json IS NOT NULL AND (ae.reputation_json->>'avg_value')::numeric <= 100
+            THEN (ae.reputation_json->>'avg_value')::numeric ELSE 0 END, 0) * 0.3
+          + LEAST((SELECT count(*) FROM oracle_agent_feedback fb2 WHERE fb2.agent_entity = ae.id), 100) * 0.3
+          + LEAST((SELECT count(*) FROM oracle_wallet_mappings wm4 WHERE wm4.agent_entity = ae.id AND wm4.removed_at IS NULL), 5) * 20 * 0.2
+          + CASE WHEN ae.display_name IS NOT NULL THEN 50 ELSE 0 END * 0.1
+          + CASE WHEN ae.metadata_json->>'active' = 'true' THEN 50 ELSE 0 END * 0.1
+        ) as smart_score
       FROM oracle_agent_entities ae ${joinClause} ${whereClause}
       ORDER BY ${this.getSortClause(params.sort)}, ae.id DESC
       LIMIT ${limitParam} ${offsetClause}`

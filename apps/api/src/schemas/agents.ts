@@ -91,6 +91,7 @@ export const AgentSearchQuery = Type.Intersect(
         Type.Literal('protocols'),
         Type.Literal('evidence'),
         Type.Literal('reputation_score'),
+        Type.Literal('smart'),
       ])),
     }),
   ],
