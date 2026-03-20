@@ -94,8 +94,22 @@ export async function harvestSolanaTransactions(
       const lastSig = cursors[address]
 
       try {
-        const txs = await fetchHeliusTransactions(config.heliusApiKey, address, lastSig)
+        // Paginate fully on first run (no cursor), single page after
+        let txs: HeliusTransaction[] = []
+        let pageCursor = lastSig
+        const maxPages = lastSig ? 1 : 20 // First run: up to 1000 txs per wallet
+
+        for (let page = 0; page < maxPages; page++) {
+          const batch = await fetchHeliusTransactions(config.heliusApiKey, address, pageCursor)
+          if (batch.length === 0) break
+          txs = txs.concat(batch)
+          pageCursor = batch[batch.length - 1].signature
+          if (batch.length < 50) break
+          await new Promise(r => setTimeout(r, 200))
+        }
+
         if (txs.length === 0) continue
+        if (!lastSig && txs.length > 50) console.log(`[solana-harvester] Backfilling ${txs.length} txs for ${address.slice(0, 8)}`)
 
         for (const tx of txs) {
           const timestamp = new Date(tx.timestamp * 1000).toISOString()
