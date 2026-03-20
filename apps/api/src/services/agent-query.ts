@@ -277,12 +277,12 @@ export class AgentQueryService {
 
     // Fetch enrichment data in parallel
     const [balancesResult, txSummaryResult, feedbackResult] = await Promise.all([
-      // Token balances for this agent
+      // Token balances for this agent (filter spam: cap at $100K per token)
       this.db.query(
         `SELECT chain, token_address, token_symbol, balance_raw, balance_usd
          FROM oracle_wallet_balances
-         WHERE agent_entity = $1
-         ORDER BY balance_usd DESC`,
+         WHERE agent_entity = $1 AND (balance_usd IS NULL OR balance_usd < 100000)
+         ORDER BY balance_usd DESC NULLS LAST`,
         [id],
       ),
       // Transaction summary

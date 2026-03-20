@@ -65,9 +65,9 @@ export async function computeEconomySnapshot(pool: pg.Pool): Promise<EconomySnap
         'SELECT COUNT(*)::int AS cnt FROM oracle_wallet_mappings WHERE removed_at IS NULL',
       ),
 
-      // total_tvl_usd: SUM of oracle_wallet_balances.balance_usd
+      // total_tvl_usd: SUM of legit balances only (cap per-token at $100K to filter spam)
       client.query(
-        'SELECT COALESCE(SUM(balance_usd), 0)::numeric AS total FROM oracle_wallet_balances',
+        'SELECT COALESCE(SUM(balance_usd), 0)::numeric AS total FROM oracle_wallet_balances WHERE balance_usd > 0 AND balance_usd < 100000',
       ),
 
       // tx_volume_24h_usd: SUM amount_usd from wallet_transactions last 24h
