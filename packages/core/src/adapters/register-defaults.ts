@@ -2,6 +2,7 @@ import { adapterRegistry } from './registry.js'
 import { gatewayTapAdapter } from './gateway-tap-adapter.js'
 import { erc8004Adapter } from './erc8004-adapter.js'
 import { heliusAdapter } from './helius-adapter.js'
+import { sol8004Adapter } from './sol8004-adapter.js'
 
 /**
  * Register all built-in adapters with the global registry.
@@ -21,4 +22,5 @@ export function registerDefaultAdapters(): void {
   adapterRegistry.register(gatewayTapAdapter)
   adapterRegistry.register(erc8004Adapter)
   adapterRegistry.register(heliusAdapter)
+  adapterRegistry.register(sol8004Adapter)
 }

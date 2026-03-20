@@ -59,9 +59,9 @@ describe('getIdentityTopics', () => {
 
   it('returns topics for adapters with identity handlers', () => {
     const topics = getIdentityTopics()
-    // Only erc8004 has an identity handler among defaults
+    // erc8004 and sol8004 both have identity handlers (they share the same topic)
     expect(topics).toContain('raw.erc8004.events')
-    expect(topics).toHaveLength(1)
+    expect(topics).toHaveLength(2)
   })
 
   it('returns empty array when no adapters have identity handlers', () => {

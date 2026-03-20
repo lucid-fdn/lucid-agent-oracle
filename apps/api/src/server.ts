@@ -329,6 +329,16 @@ if (databaseUrl) {
   if (heliusApiKey) {
     startSolanaTxHarvester(sharedPool, { intervalMs: 60_000, walletsPerCycle: 50, heliusApiKey })
     app.log.info('[ingestion:solana] TX harvester started')
+
+    // Solana Identity Indexer — polls 8004-solana Agent Registry for identity events
+    const { Sol8004Provider, startSolanaIdentityIndexer } = await import('@lucid/oracle-core')
+    startSolanaIdentityIndexer(sharedPool, {
+      heliusApiKey,
+      providers: [new Sol8004Provider()],
+      pollIntervalMs: 30_000,
+      batchSize: 50,
+    })
+    app.log.info('[ingestion:solana-identity] Started with sol8004 provider')
   }
 
   // Moralis classifier — reclassifies Base transactions with high-accuracy labels

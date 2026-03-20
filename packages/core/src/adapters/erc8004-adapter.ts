@@ -15,8 +15,8 @@ import { TOPICS } from '../clients/redpanda.js'
  * All events also carry: event_type, tx_hash, block_number, chain, source
  */
 
-const erc8004IdentityHandler: IdentityHandler = {
-  handles: ['agent_registered', 'uri_updated', 'metadata_set', 'ownership_transferred', 'new_feedback'],
+export const erc8004IdentityHandler: IdentityHandler = {
+  handles: ['agent_registered', 'uri_updated', 'metadata_set', 'ownership_transferred', 'new_feedback', 'feedback_revoked'],
 
   async handleEvent(
     raw: Record<string, unknown>,
@@ -36,6 +36,8 @@ const erc8004IdentityHandler: IdentityHandler = {
         return handleOwnershipTransferred(event, db, producer)
       case 'new_feedback':
         return handleNewFeedback(event, db)
+      case 'feedback_revoked':
+        return handleFeedbackRevoked(event, db)
     }
   },
 }
@@ -77,8 +79,8 @@ async function handleAgentRegistered(
 
   // Map owner wallet
   if (event.owner_address) {
-    await upsertWalletMapping(db, entityId, 'base', event.owner_address, 'onchain_proof', event.tx_hash ?? '')
-    await publishWatchlistUpdate(producer, 'add', 'base', event.owner_address, entityId)
+    await upsertWalletMapping(db, entityId, event.chain ?? 'base', event.owner_address, 'onchain_proof', event.tx_hash ?? '')
+    await publishWatchlistUpdate(producer, 'add', event.chain ?? 'base', event.owner_address, entityId)
   }
 
   // Identity link
@@ -155,8 +157,8 @@ async function handleMetadataSet(
   if (keyName === 'agentWallet' && data && data.length > 2) {
     const walletAddress = decodeAddressFromBytes(data)
     if (walletAddress) {
-      await upsertWalletMapping(db, entityId, 'base', walletAddress, 'onchain_proof', event.tx_hash ?? '')
-      await publishWatchlistUpdate(producer, 'add', 'base', walletAddress, entityId)
+      await upsertWalletMapping(db, entityId, event.chain ?? 'base', walletAddress, 'onchain_proof', event.tx_hash ?? '')
+      await publishWatchlistUpdate(producer, 'add', event.chain ?? 'base', walletAddress, entityId)
     }
   }
 
@@ -205,16 +207,16 @@ async function handleOwnershipTransferred(
   if (event.previous_owner) {
     await db.query(
       `UPDATE oracle_wallet_mappings SET removed_at = now()
-       WHERE chain = 'base' AND LOWER(address) = LOWER($1) AND removed_at IS NULL`,
-      [event.previous_owner],
+       WHERE chain = $1 AND LOWER(address) = LOWER($2) AND removed_at IS NULL`,
+      [event.chain ?? 'base', event.previous_owner],
     )
-    await publishWatchlistUpdate(producer, 'remove', 'base', event.previous_owner, entityId)
+    await publishWatchlistUpdate(producer, 'remove', event.chain ?? 'base', event.previous_owner, entityId)
   }
 
   // Add new owner's wallet mapping
   if (event.new_owner) {
-    await upsertWalletMapping(db, entityId, 'base', event.new_owner, 'onchain_proof', event.tx_hash ?? '')
-    await publishWatchlistUpdate(producer, 'add', 'base', event.new_owner, entityId)
+    await upsertWalletMapping(db, entityId, event.chain ?? 'base', event.new_owner, 'onchain_proof', event.tx_hash ?? '')
+    await publishWatchlistUpdate(producer, 'add', event.chain ?? 'base', event.new_owner, entityId)
   }
 }
 
@@ -235,14 +237,25 @@ async function handleNewFeedback(
     `INSERT INTO oracle_agent_feedback
      (agent_entity, chain, client_address, feedback_index, value, value_decimals,
       tag1, tag2, endpoint, feedback_uri, feedback_hash, tx_hash, block_number, event_timestamp)
-     VALUES ($1, 'base', $2, $3::int, $4::int, $5::smallint, $6, $7, $8, $9, $10, $11, $12::bigint, $13::timestamptz)
+     VALUES ($1, $2, $3, $4::int, $5::int, $6::smallint, $7, $8, $9, $10, $11, $12, $13::bigint, $14::timestamptz)
      ON CONFLICT (agent_entity, chain, feedback_index) DO NOTHING`,
-    [entityId, event.client_address, event.feedback_index ?? 0, event.value ?? 0, event.value_decimals ?? 0,
+    [entityId, event.chain ?? 'base', event.client_address, event.feedback_index ?? 0, event.value ?? 0, event.value_decimals ?? 0,
      event.tag1 ?? '', event.tag2 ?? '', event.endpoint ?? '', event.feedback_uri ?? '', event.feedback_hash ?? '',
      event.tx_hash ?? '', event.block_number ?? 0, event.timestamp ?? new Date().toISOString()],
   )
 
-  // Update agent's reputation summary (JS-built JSON for PgBouncer compatibility)
+  // Update agent's reputation summary
+  await recomputeReputation(db, entityId)
+}
+
+/**
+ * Recompute and persist the reputation summary for an agent entity.
+ * Shared by handleNewFeedback and handleFeedbackRevoked.
+ */
+async function recomputeReputation(
+  db: DbClient,
+  entityId: string,
+): Promise<void> {
   const feedbackStats = await db.query(
     `SELECT count(*) as feedback_count,
             round(avg(value)::numeric, 2) as avg_value
@@ -270,6 +283,29 @@ async function handleNewFeedback(
   )
 }
 
+async function handleFeedbackRevoked(
+  event: Record<string, any>,
+  db: DbClient,
+): Promise<void> {
+  const agentId = String(event.agent_id)
+  const existing = await db.query(
+    'SELECT id FROM oracle_agent_entities WHERE erc8004_id = $1',
+    [agentId],
+  )
+  if (existing.rows.length === 0) return
+  const entityId = existing.rows[0].id as string
+
+  // Delete the revoked feedback row
+  await db.query(
+    `DELETE FROM oracle_agent_feedback
+     WHERE agent_entity = $1 AND chain = $2 AND feedback_index = $3::int`,
+    [entityId, event.chain ?? 'base', event.feedback_index ?? 0],
+  )
+
+  // Recompute reputation after deletion
+  await recomputeReputation(db, entityId)
+}
+
 async function upsertWalletMapping(
   db: DbClient,
   entityId: string,
@@ -292,7 +328,7 @@ async function upsertWalletMapping(
 async function publishWatchlistUpdate(
   producer: RedpandaProducer | null,
   action: 'add' | 'remove',
-  chain: 'base' | 'solana',
+  chain: string,
   address: string,
   entityId: string,
 ): Promise<void> {
@@ -302,12 +338,12 @@ async function publishWatchlistUpdate(
   })
 }
 
-/** ERC-8004 adapter — indexes agent identity registry events on Base */
+/** ERC-8004 adapter — indexes agent identity registry events (chain-agnostic) */
 export const erc8004Adapter: AdapterDefinition = {
   source: 'erc8004',
   version: 2,
-  description: 'ERC-8004 Agent Identity Registry on Base',
+  description: 'ERC-8004 Agent Identity Registry',
   topic: TOPICS.RAW_ERC8004,
-  chains: ['base'],
+  chains: ['base', 'solana'],
   identity: erc8004IdentityHandler,
 }

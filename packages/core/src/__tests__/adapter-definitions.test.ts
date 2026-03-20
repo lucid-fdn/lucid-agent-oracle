@@ -3,6 +3,7 @@ import { AdapterRegistry } from '../adapters/registry.js'
 import { gatewayTapAdapter } from '../adapters/gateway-tap-adapter.js'
 import { erc8004Adapter } from '../adapters/erc8004-adapter.js'
 import { heliusAdapter } from '../adapters/helius-adapter.js'
+import { sol8004Adapter } from '../adapters/sol8004-adapter.js'
 import { registerDefaultAdapters } from '../adapters/register-defaults.js'
 import { adapterRegistry } from '../adapters/registry.js'
 import { TOPICS } from '../clients/redpanda.js'
@@ -36,6 +37,7 @@ describe('Built-in adapter definitions', () => {
       expect(erc8004Adapter.identity!.handles).toContain('uri_updated')
       expect(erc8004Adapter.identity!.handles).toContain('metadata_set')
       expect(erc8004Adapter.identity!.handles).toContain('ownership_transferred')
+      expect(erc8004Adapter.identity!.handles).toContain('feedback_revoked')
     })
 
     it('has no webhook', () => {
@@ -60,6 +62,24 @@ describe('Built-in adapter definitions', () => {
       expect(heliusAdapter.identity).toBeUndefined()
     })
   })
+
+  describe('sol8004Adapter', () => {
+    it('has correct source and metadata', () => {
+      expect(sol8004Adapter.source).toBe('sol8004')
+      expect(sol8004Adapter.version).toBe(1)
+      expect(sol8004Adapter.chains).toContain('solana')
+      expect(sol8004Adapter.description).toContain('Solana 8004')
+    })
+
+    it('shares identity handler with erc8004Adapter', () => {
+      expect(sol8004Adapter.identity).toBeDefined()
+      expect(sol8004Adapter.identity).toBe(erc8004Adapter.identity)
+    })
+
+    it('has no webhook', () => {
+      expect(sol8004Adapter.webhook).toBeUndefined()
+    })
+  })
 })
 
 describe('registerDefaultAdapters', () => {
@@ -69,15 +89,16 @@ describe('registerDefaultAdapters', () => {
 
   it('registers all built-in adapters', () => {
     registerDefaultAdapters()
-    expect(adapterRegistry.size).toBe(3)
+    expect(adapterRegistry.size).toBe(4)
     expect(adapterRegistry.get('lucid_gateway')).toBeDefined()
     expect(adapterRegistry.get('erc8004')).toBeDefined()
     expect(adapterRegistry.get('agent_wallets_sol')).toBeDefined()
+    expect(adapterRegistry.get('sol8004')).toBeDefined()
   })
 
   it('is idempotent', () => {
     registerDefaultAdapters()
     registerDefaultAdapters() // should not throw
-    expect(adapterRegistry.size).toBe(3)
+    expect(adapterRegistry.size).toBe(4)
   })
 })

@@ -73,8 +73,14 @@ export {
 
 // Built-in adapter definitions
 export { gatewayTapAdapter } from './adapters/gateway-tap-adapter.js'
-export { erc8004Adapter } from './adapters/erc8004-adapter.js'
+export { erc8004Adapter, erc8004IdentityHandler } from './adapters/erc8004-adapter.js'
 export { heliusAdapter } from './adapters/helius-adapter.js'
+export { sol8004Adapter } from './adapters/sol8004-adapter.js'
+
+// Solana Identity (pluggable provider system)
+export type { SolanaIdentityProvider, StagingEvent, SolanaIdentityIndexerConfig } from './adapters/solana-identity/types.js'
+export { Sol8004Provider } from './adapters/solana-identity/sol8004-provider.js'
+export { startSolanaIdentityIndexer, indexSolanaIdentityEvents } from './adapters/solana-identity/indexer.js'
 
 // Adapter normalizers (low-level — prefer adapter definitions for new integrations)
 export {
