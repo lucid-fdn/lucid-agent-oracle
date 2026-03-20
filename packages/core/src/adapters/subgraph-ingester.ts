@@ -298,7 +298,9 @@ export function startSubgraphIngester(
     'subgraph-ingester',
     fullConfig.pollIntervalMs,
     async () => {
+      console.log('[subgraph-ingester] Starting sync cycle...')
       const n = await runSubgraphSync(pool, fullConfig)
+      console.log(`[subgraph-ingester] Cycle complete: ${n} agents`)
       return n > 0 ? n : null
     },
   )
