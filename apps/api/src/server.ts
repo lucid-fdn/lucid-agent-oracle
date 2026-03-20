@@ -344,20 +344,24 @@ if (databaseUrl) {
   // Moralis classifier — reclassifies Base transactions with high-accuracy labels
   const moralisApiKey = process.env.MORALIS_API_KEY
   if (moralisApiKey) {
-    startMoralisClassifier(sharedPool, { apiKey: moralisApiKey, intervalMs: 60_000, batchSize: 20 })
-    app.log.info('[ingestion:moralis] Swap classifier started (high-accuracy)')
+    // Moralis free tier: 40K calls/day. Budget allocation:
+    // Classifier: 10 wallets × every 5min = ~2,880/day
+    // Balances:   20 wallets × every 15min = ~1,920/day
+    // DeFi:       10 wallets × every 60min = ~240/day
+    // NFTs:       10 wallets × every 60min = ~240/day
+    // ENS/Contract: ~500/day
+    // Total: ~5,780/day (well within 40K limit)
+    startMoralisClassifier(sharedPool, { apiKey: moralisApiKey, intervalMs: 5 * 60_000, batchSize: 10 })
+    app.log.info('[ingestion:moralis] Swap classifier started (5min cycle, 10/batch)')
 
-    // Balance enricher — polls Moralis for token balances (reuses same API key)
-    startBalanceEnricher(sharedPool, { apiKey: moralisApiKey, intervalMs: 5 * 60_000, walletsPerCycle: 20 })
-    app.log.info('[ingestion:moralis] Balance enricher started (5min cycle)')
+    startBalanceEnricher(sharedPool, { apiKey: moralisApiKey, intervalMs: 15 * 60_000, walletsPerCycle: 20 })
+    app.log.info('[ingestion:moralis] Balance enricher started (15min cycle)')
 
-    // DeFi position enricher — polls Moralis for LP/staking/lending positions
-    startDefiEnricher(sharedPool, { apiKey: moralisApiKey, intervalMs: 30 * 60_000, batchSize: 10 })
-    app.log.info('[enrichment:moralis] DeFi position enricher started (30min cycle)')
+    startDefiEnricher(sharedPool, { apiKey: moralisApiKey, intervalMs: 60 * 60_000, batchSize: 10 })
+    app.log.info('[enrichment:moralis] DeFi enricher started (60min cycle)')
 
-    // NFT holdings enricher — polls Moralis for NFT holdings
-    startNftEnricher(sharedPool, { apiKey: moralisApiKey, intervalMs: 30 * 60_000, batchSize: 10 })
-    app.log.info('[enrichment:moralis] NFT holdings enricher started (30min cycle)')
+    startNftEnricher(sharedPool, { apiKey: moralisApiKey, intervalMs: 60 * 60_000, batchSize: 10 })
+    app.log.info('[enrichment:moralis] NFT enricher started (60min cycle)')
   }
 
   // Economy metrics — hourly snapshots of economy health
