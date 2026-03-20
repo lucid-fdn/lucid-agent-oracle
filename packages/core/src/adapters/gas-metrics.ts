@@ -10,6 +10,7 @@
  * Runs every 15 minutes, advisory-locked.
  */
 import type pg from 'pg'
+import { withAdvisoryLock, startEnricherLoop } from './enricher-utils.js'
 
 export interface GasMetricsConfig {
   intervalMs: number
@@ -31,12 +32,8 @@ export interface GasMetricsResult {
  * Compute and store gas/activity metrics for all agents.
  */
 export async function computeGasMetrics(pool: pg.Pool): Promise<number> {
-  const client = await pool.connect()
-  let computed = 0
-
-  try {
-    const lockResult = await client.query("SELECT pg_try_advisory_lock(hashtext('gas_metrics'))")
-    if (!lockResult.rows[0].pg_try_advisory_lock) return 0
+  const result = await withAdvisoryLock(pool, 'gas_metrics', async (client) => {
+    let computed = 0
 
     // Compute metrics for each period in a single pass per period
     const periods = [
@@ -46,7 +43,7 @@ export async function computeGasMetrics(pool: pg.Pool): Promise<number> {
     ]
 
     for (const { key, interval } of periods) {
-      const result = await client.query(
+      const periodResult = await client.query(
         `SELECT
            wt.agent_entity,
            COUNT(*)::int AS tx_count,
@@ -58,7 +55,7 @@ export async function computeGasMetrics(pool: pg.Pool): Promise<number> {
         [interval],
       )
 
-      for (const row of result.rows) {
+      for (const row of periodResult.rows) {
         await client.query(
           `INSERT INTO oracle_gas_metrics
            (agent_entity, period, tx_count, unique_contracts, active_chains, computed_at)
@@ -80,12 +77,10 @@ export async function computeGasMetrics(pool: pg.Pool): Promise<number> {
       }
     }
 
-    await client.query("SELECT pg_advisory_unlock(hashtext('gas_metrics'))")
-  } finally {
-    client.release()
-  }
+    return computed
+  })
 
-  return computed
+  return result ?? 0
 }
 
 /**
@@ -120,20 +115,12 @@ export function startGasMetrics(
   config?: Partial<GasMetricsConfig>,
 ): { stop: () => void } {
   const fullConfig = { ...DEFAULT_CONFIG, ...config }
-  let running = true
-
-  const loop = async () => {
-    while (running) {
-      try {
-        const n = await computeGasMetrics(pool)
-        if (n > 0) console.log(`[gas-metrics] Computed ${n} agent metric rows`)
-      } catch (err) {
-        console.error('[gas-metrics] Error:', (err as Error).message)
-      }
-      await new Promise((r) => setTimeout(r, fullConfig.intervalMs))
-    }
-  }
-
-  loop()
-  return { stop: () => { running = false } }
+  return startEnricherLoop(
+    'gas-metrics',
+    fullConfig.intervalMs,
+    async () => {
+      const n = await computeGasMetrics(pool)
+      return n > 0 ? n : null
+    },
+  )
 }

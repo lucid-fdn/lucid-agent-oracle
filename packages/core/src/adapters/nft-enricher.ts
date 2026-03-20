@@ -8,6 +8,8 @@
  * Advisory-locked to prevent concurrent execution across replicas.
  */
 import type pg from 'pg'
+import { withAdvisoryLock, fetchMoralis, startEnricherLoop } from './enricher-utils.js'
+import { getMoralisChainParam } from './chains.js'
 
 export interface NftEnricherConfig {
   apiKey: string
@@ -38,12 +40,8 @@ export async function enrichNftHoldings(
 ): Promise<number> {
   if (!config.apiKey) return 0
 
-  const client = await pool.connect()
-  let enriched = 0
-
-  try {
-    const lockResult = await client.query("SELECT pg_try_advisory_lock(hashtext('nft_enricher'))")
-    if (!lockResult.rows[0].pg_try_advisory_lock) return 0
+  const result = await withAdvisoryLock(pool, 'nft_enricher', async (client) => {
+    let enriched = 0
 
     const wallets = await client.query(
       `SELECT wm.agent_entity, wm.chain, wm.address
@@ -112,12 +110,10 @@ export async function enrichNftHoldings(
       }
     }
 
-    await client.query("SELECT pg_advisory_unlock(hashtext('nft_enricher'))")
-  } finally {
-    client.release()
-  }
+    return enriched
+  })
 
-  return enriched
+  return result ?? 0
 }
 
 function safeJsonParse(str: string): Record<string, unknown> | null {
@@ -132,32 +128,10 @@ async function fetchMoralisNFTs(
   apiKey: string,
   address: string,
 ): Promise<MoralisNFT[]> {
-  const url = `https://deep-index.moralis.io/api/v2.2/${address}/nft?chain=base&limit=20`
-
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10_000)
-
-  try {
-    const res = await fetch(url, {
-      headers: {
-        'accept': 'application/json',
-        'x-api-key': apiKey,
-      },
-      signal: controller.signal,
-    })
-
-    if (!res.ok) {
-      if (res.status === 429) console.warn('[nft-enricher] Rate limited')
-      return []
-    }
-
-    const data = await res.json() as { result?: MoralisNFT[] }
-    return data.result ?? []
-  } catch {
-    return []
-  } finally {
-    clearTimeout(timer)
-  }
+  const chainParam = getMoralisChainParam('base')
+  const data = await fetchMoralis(`/${address}/nft?chain=${chainParam}&limit=20`, apiKey)
+  if (!data) return []
+  return (data as { result?: MoralisNFT[] }).result ?? []
 }
 
 /**
@@ -168,20 +142,12 @@ export function startNftEnricher(
   config: Partial<NftEnricherConfig> & { apiKey: string },
 ): { stop: () => void } {
   const fullConfig = { ...DEFAULT_CONFIG, ...config }
-  let running = true
-
-  const loop = async () => {
-    while (running) {
-      try {
-        const n = await enrichNftHoldings(pool, fullConfig)
-        if (n > 0) console.log(`[nft-enricher] Enriched ${n} NFT holdings`)
-      } catch (err) {
-        console.error('[nft-enricher] Error:', (err as Error).message)
-      }
-      await new Promise((r) => setTimeout(r, fullConfig.intervalMs))
-    }
-  }
-
-  loop()
-  return { stop: () => { running = false } }
+  return startEnricherLoop(
+    'nft-enricher',
+    fullConfig.intervalMs,
+    async () => {
+      const n = await enrichNftHoldings(pool, fullConfig)
+      return n > 0 ? n : null
+    },
+  )
 }

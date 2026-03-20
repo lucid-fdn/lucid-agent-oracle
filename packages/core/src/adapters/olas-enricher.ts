@@ -9,6 +9,7 @@
  * Brittle by nature — everything is wrapped in try/catch, never fails the cycle.
  */
 import type pg from 'pg'
+import { withAdvisoryLock, startEnricherLoop } from './enricher-utils.js'
 
 export interface OlasEnricherConfig {
   intervalMs: number
@@ -35,12 +36,8 @@ export async function enrichOlasAgents(
   pool: pg.Pool,
   config: OlasEnricherConfig = DEFAULT_CONFIG,
 ): Promise<number> {
-  const client = await pool.connect()
-  let enriched = 0
-
-  try {
-    const lockResult = await client.query("SELECT pg_try_advisory_lock(hashtext('olas_enricher'))")
-    if (!lockResult.rows[0].pg_try_advisory_lock) return 0
+  const result = await withAdvisoryLock(pool, 'olas_enricher', async (client) => {
+    let enriched = 0
 
     // Select agents with Olas URIs that haven't been enriched yet
     const agents = await client.query(
@@ -101,12 +98,10 @@ export async function enrichOlasAgents(
       }
     }
 
-    await client.query("SELECT pg_advisory_unlock(hashtext('olas_enricher'))")
-  } finally {
-    client.release()
-  }
+    return enriched
+  })
 
-  return enriched
+  return result ?? 0
 }
 
 /**
@@ -205,20 +200,12 @@ export function startOlasEnricher(
   config: Partial<OlasEnricherConfig> = {},
 ): { stop: () => void } {
   const fullConfig = { ...DEFAULT_CONFIG, ...config }
-  let running = true
-
-  const loop = async () => {
-    while (running) {
-      try {
-        const n = await enrichOlasAgents(pool, fullConfig)
-        if (n > 0) console.log(`[olas-enricher] Enriched ${n} Olas agents`)
-      } catch (err) {
-        console.error('[olas-enricher] Error:', (err as Error).message)
-      }
-      await new Promise((r) => setTimeout(r, fullConfig.intervalMs))
-    }
-  }
-
-  loop()
-  return { stop: () => { running = false } }
+  return startEnricherLoop(
+    'olas-enricher',
+    fullConfig.intervalMs,
+    async () => {
+      const n = await enrichOlasAgents(pool, fullConfig)
+      return n > 0 ? n : null
+    },
+  )
 }

@@ -6,6 +6,7 @@
  * Respects rate limits (max 10 URIs per cycle, 200ms between requests).
  */
 import type pg from 'pg'
+import { withAdvisoryLock, startEnricherLoop } from './enricher-utils.js'
 
 export interface URIResolverConfig {
   intervalMs: number
@@ -38,17 +39,10 @@ export async function resolveAgentURIs(
   pool: pg.Pool,
   config: URIResolverConfig = DEFAULT_CONFIG,
 ): Promise<number> {
-  const client = await pool.connect()
-  let resolved = 0
+  const result = await withAdvisoryLock(pool, 'uri_resolver', async (client) => {
+    let resolved = 0
 
-  try {
-    // Advisory lock — only one resolver instance at a time
-    const lockResult = await client.query("SELECT pg_try_advisory_lock(hashtext('uri_resolver'))")
-    if (!lockResult.rows[0].pg_try_advisory_lock) {
-      return 0
-    }
-
-    const result = await client.query(
+    const queryResult = await client.query(
       `SELECT id, erc8004_id, agent_uri FROM oracle_agent_entities
        WHERE agent_uri IS NOT NULL
          AND agent_uri LIKE 'http%'
@@ -58,7 +52,7 @@ export async function resolveAgentURIs(
       [config.batchSize],
     )
 
-    for (const row of result.rows) {
+    for (const row of queryResult.rows) {
       try {
         const registration = await fetchRegistrationFile(row.agent_uri as string, config.timeoutMs)
 
@@ -135,12 +129,10 @@ export async function resolveAgentURIs(
       await new Promise((r) => setTimeout(r, config.requestDelayMs))
     }
 
-    await client.query("SELECT pg_advisory_unlock(hashtext('uri_resolver'))")
-  } finally {
-    client.release()
-  }
+    return resolved
+  })
 
-  return resolved
+  return result ?? 0
 }
 
 async function fetchRegistrationFile(uri: string, timeoutMs: number): Promise<RegistrationFile | null> {
@@ -176,20 +168,12 @@ export function startURIResolver(
   pool: pg.Pool,
   config: URIResolverConfig = DEFAULT_CONFIG,
 ): { stop: () => void } {
-  let running = true
-
-  const loop = async () => {
-    while (running) {
-      try {
-        const n = await resolveAgentURIs(pool, config)
-        if (n > 0) console.log(`[uri-resolver] Resolved ${n} agent URIs`)
-      } catch (err) {
-        console.error('[uri-resolver] Error:', (err as Error).message)
-      }
-      await new Promise((r) => setTimeout(r, config.intervalMs))
-    }
-  }
-
-  loop()
-  return { stop: () => { running = false } }
+  return startEnricherLoop(
+    'uri-resolver',
+    config.intervalMs,
+    async () => {
+      const n = await resolveAgentURIs(pool, config)
+      return n > 0 ? n : null
+    },
+  )
 }

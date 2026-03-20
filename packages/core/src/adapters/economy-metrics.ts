@@ -6,6 +6,7 @@
  * Runs every hour.
  */
 import type pg from 'pg'
+import { withAdvisoryLock, startEnricherLoop } from './enricher-utils.js'
 
 export interface EconomyMetricsConfig {
   intervalMs: number
@@ -32,12 +33,7 @@ export interface EconomySnapshot {
  * Compute and store a single economy snapshot.
  */
 export async function computeEconomySnapshot(pool: pg.Pool): Promise<EconomySnapshot | null> {
-  const client = await pool.connect()
-
-  try {
-    const lockResult = await client.query("SELECT pg_try_advisory_lock(hashtext('economy_metrics'))")
-    if (!lockResult.rows[0].pg_try_advisory_lock) return null
-
+  return await withAdvisoryLock(pool, 'economy_metrics', async (client) => {
     // Run all aggregation queries in parallel
     const [
       totalAgentsResult,
@@ -150,11 +146,8 @@ export async function computeEconomySnapshot(pool: pg.Pool): Promise<EconomySnap
       ],
     )
 
-    await client.query("SELECT pg_advisory_unlock(hashtext('economy_metrics'))")
     return snapshot
-  } finally {
-    client.release()
-  }
+  })
 }
 
 /**
@@ -165,22 +158,17 @@ export function startEconomyMetrics(
   config?: Partial<EconomyMetricsConfig>,
 ): { stop: () => void } {
   const fullConfig = { ...DEFAULT_CONFIG, ...config }
-  let running = true
-
-  const loop = async () => {
-    while (running) {
-      try {
-        const snapshot = await computeEconomySnapshot(pool)
-        if (snapshot) {
-          console.log(`[economy-metrics] Snapshot: agents=${snapshot.total_agents} tvl=$${snapshot.total_tvl_usd} txs_24h=${snapshot.tx_count_24h}`)
-        }
-      } catch (err) {
-        console.error('[economy-metrics] Error:', (err as Error).message)
+  return startEnricherLoop(
+    'economy-metrics',
+    fullConfig.intervalMs,
+    async () => {
+      const snapshot = await computeEconomySnapshot(pool)
+      if (snapshot) {
+        // Override the default log in startEnricherLoop by returning null
+        // and logging our own specific message
+        console.log(`[economy-metrics] Snapshot: agents=${snapshot.total_agents} tvl=$${snapshot.total_tvl_usd} txs_24h=${snapshot.tx_count_24h}`)
       }
-      await new Promise((r) => setTimeout(r, fullConfig.intervalMs))
-    }
-  }
-
-  loop()
-  return { stop: () => { running = false } }
+      return null // suppress generic "Processed N items" log
+    },
+  )
 }

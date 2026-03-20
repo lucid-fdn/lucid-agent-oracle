@@ -8,6 +8,8 @@
  * Advisory-locked to prevent concurrent execution across replicas.
  */
 import type pg from 'pg'
+import { withAdvisoryLock, fetchMoralis, startEnricherLoop } from './enricher-utils.js'
+import { EVM_CHAINS, getMoralisChainParam } from './chains.js'
 
 export interface BalanceEnricherConfig {
   apiKey: string
@@ -31,6 +33,9 @@ interface MoralisTokenBalance {
   usd_value: number | null
 }
 
+/** SQL IN-list for EVM chain IDs */
+const EVM_CHAIN_IN = EVM_CHAINS.map(c => `'${c.id}'`).join(',')
+
 /**
  * Fetch and store token balances for a batch of active agent wallets.
  */
@@ -40,12 +45,8 @@ export async function enrichWalletBalances(
 ): Promise<number> {
   if (!config.apiKey) return 0
 
-  const client = await pool.connect()
-  let enriched = 0
-
-  try {
-    const lockResult = await client.query("SELECT pg_try_advisory_lock(hashtext('balance_enricher'))")
-    if (!lockResult.rows[0].pg_try_advisory_lock) return 0
+  const result = await withAdvisoryLock(pool, 'balance_enricher', async (client) => {
+    let enriched = 0
 
     // Select wallets that haven't been enriched recently (or ever)
     // Prioritise wallets with no balance data, then oldest updated
@@ -55,7 +56,7 @@ export async function enrichWalletBalances(
        LEFT JOIN oracle_wallet_balances wb
          ON wb.chain = wm.chain AND wb.wallet_address = LOWER(wm.address)
        WHERE wm.removed_at IS NULL
-         AND wm.chain IN ('base', 'eth')
+         AND wm.chain IN (${EVM_CHAIN_IN})
        GROUP BY wm.agent_entity, wm.chain, wm.address
        ORDER BY MIN(wb.updated_at) ASC NULLS FIRST
        LIMIT $1::int`,
@@ -96,12 +97,10 @@ export async function enrichWalletBalances(
       }
     }
 
-    await client.query("SELECT pg_advisory_unlock(hashtext('balance_enricher'))")
-  } finally {
-    client.release()
-  }
+    return enriched
+  })
 
-  return enriched
+  return result ?? 0
 }
 
 async function fetchMoralisBalances(
@@ -109,33 +108,10 @@ async function fetchMoralisBalances(
   address: string,
   chain: string,
 ): Promise<MoralisTokenBalance[]> {
-  const chainParam = chain === 'base' ? '0x2105' : chain === 'eth' ? '0x1' : chain
-  const url = `https://deep-index.moralis.io/api/v2.2/wallets/${address}/tokens?chain=${chainParam}`
-
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10_000)
-
-  try {
-    const res = await fetch(url, {
-      headers: {
-        'accept': 'application/json',
-        'x-api-key': apiKey,
-      },
-      signal: controller.signal,
-    })
-
-    if (!res.ok) {
-      if (res.status === 429) console.warn('[balance-enricher] Rate limited')
-      return []
-    }
-
-    const data = await res.json() as { result?: MoralisTokenBalance[] }
-    return data.result ?? []
-  } catch {
-    return []
-  } finally {
-    clearTimeout(timer)
-  }
+  const chainParam = getMoralisChainParam(chain)
+  const data = await fetchMoralis(`/wallets/${address}/tokens?chain=${chainParam}`, apiKey)
+  if (!data) return []
+  return (data as { result?: MoralisTokenBalance[] }).result ?? []
 }
 
 /**
@@ -146,20 +122,12 @@ export function startBalanceEnricher(
   config: Partial<BalanceEnricherConfig> & { apiKey: string },
 ): { stop: () => void } {
   const fullConfig = { ...DEFAULT_CONFIG, ...config }
-  let running = true
-
-  const loop = async () => {
-    while (running) {
-      try {
-        const n = await enrichWalletBalances(pool, fullConfig)
-        if (n > 0) console.log(`[balance-enricher] Enriched ${n} token balances`)
-      } catch (err) {
-        console.error('[balance-enricher] Error:', (err as Error).message)
-      }
-      await new Promise((r) => setTimeout(r, fullConfig.intervalMs))
-    }
-  }
-
-  loop()
-  return { stop: () => { running = false } }
+  return startEnricherLoop(
+    'balance-enricher',
+    fullConfig.intervalMs,
+    async () => {
+      const n = await enrichWalletBalances(pool, fullConfig)
+      return n > 0 ? n : null
+    },
+  )
 }

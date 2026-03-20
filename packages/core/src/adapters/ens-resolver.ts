@@ -9,6 +9,7 @@
  * Advisory-locked to prevent concurrent execution across replicas.
  */
 import type pg from 'pg'
+import { withAdvisoryLock, fetchMoralis, startEnricherLoop } from './enricher-utils.js'
 
 export interface ENSResolverConfig {
   moralisApiKey?: string
@@ -38,12 +39,8 @@ export async function resolveNames(
 ): Promise<number> {
   if (!config.moralisApiKey && !config.baseRpcUrl) return 0
 
-  const client = await pool.connect()
-  let resolved = 0
-
-  try {
-    const lockResult = await client.query("SELECT pg_try_advisory_lock(hashtext('ens_resolver'))")
-    if (!lockResult.rows[0].pg_try_advisory_lock) return 0
+  const result = await withAdvisoryLock(pool, 'ens_resolver', async (client) => {
+    let resolved = 0
 
     // Select addresses not yet resolved (or stale > 24h)
     const addresses = await client.query(
@@ -68,9 +65,9 @@ export async function resolveNames(
         let avatar: string | null = null
 
         if (chain === 'eth' && config.moralisApiKey) {
-          const result = await resolveENSViaMoralis(config.moralisApiKey, address)
-          name = result.name
-          avatar = result.avatar
+          const resolveResult = await resolveENSViaMoralis(config.moralisApiKey, address)
+          name = resolveResult.name
+          avatar = resolveResult.avatar
         } else if (chain === 'base' && config.baseRpcUrl) {
           name = await resolveBasename(config.baseRpcUrl, address)
         }
@@ -95,12 +92,10 @@ export async function resolveNames(
       }
     }
 
-    await client.query("SELECT pg_advisory_unlock(hashtext('ens_resolver'))")
-  } finally {
-    client.release()
-  }
+    return resolved
+  })
 
-  return resolved
+  return result ?? 0
 }
 
 /**
@@ -110,32 +105,9 @@ async function resolveENSViaMoralis(
   apiKey: string,
   address: string,
 ): Promise<{ name: string | null; avatar: string | null }> {
-  const url = `https://deep-index.moralis.io/api/v2.2/resolve/${address}/reverse`
-
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10_000)
-
-  try {
-    const res = await fetch(url, {
-      headers: {
-        'accept': 'application/json',
-        'x-api-key': apiKey,
-      },
-      signal: controller.signal,
-    })
-
-    if (!res.ok) {
-      if (res.status === 429) console.warn('[ens-resolver] Moralis rate limited')
-      return { name: null, avatar: null }
-    }
-
-    const data = await res.json() as { name?: string }
-    return { name: data.name ?? null, avatar: null }
-  } catch {
-    return { name: null, avatar: null }
-  } finally {
-    clearTimeout(timer)
-  }
+  const data = await fetchMoralis(`/resolve/${address}/reverse`, apiKey)
+  if (!data) return { name: null, avatar: null }
+  return { name: (data as { name?: string }).name ?? null, avatar: null }
 }
 
 /**
@@ -242,20 +214,12 @@ export function startENSResolver(
   config: Partial<ENSResolverConfig> = {},
 ): { stop: () => void } {
   const fullConfig = { ...DEFAULT_CONFIG, ...config }
-  let running = true
-
-  const loop = async () => {
-    while (running) {
-      try {
-        const n = await resolveNames(pool, fullConfig)
-        if (n > 0) console.log(`[ens-resolver] Resolved ${n} names`)
-      } catch (err) {
-        console.error('[ens-resolver] Error:', (err as Error).message)
-      }
-      await new Promise((r) => setTimeout(r, fullConfig.intervalMs))
-    }
-  }
-
-  loop()
-  return { stop: () => { running = false } }
+  return startEnricherLoop(
+    'ens-resolver',
+    fullConfig.intervalMs,
+    async () => {
+      const n = await resolveNames(pool, fullConfig)
+      return n > 0 ? n : null
+    },
+  )
 }

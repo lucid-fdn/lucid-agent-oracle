@@ -8,6 +8,8 @@
  * Runs every 15 minutes, advisory-locked.
  */
 import type pg from 'pg'
+import { withAdvisoryLock, fetchMoralis, startEnricherLoop } from './enricher-utils.js'
+import { getMoralisChainParam } from './chains.js'
 
 export interface ContractAnalyzerConfig {
   moralisApiKey?: string
@@ -37,15 +39,11 @@ export async function analyzeContractInteractions(
   pool: pg.Pool,
   config: ContractAnalyzerConfig = DEFAULT_CONFIG,
 ): Promise<number> {
-  const client = await pool.connect()
-  let analyzed = 0
-
-  try {
-    const lockResult = await client.query("SELECT pg_try_advisory_lock(hashtext('contract_analyzer'))")
-    if (!lockResult.rows[0].pg_try_advisory_lock) return 0
+  const result = await withAdvisoryLock(pool, 'contract_analyzer', async (client) => {
+    let analyzed = 0
 
     // Group transactions by agent + counterparty
-    const result = await client.query(
+    const queryResult = await client.query(
       `SELECT
          wt.agent_entity,
          wt.chain,
@@ -60,7 +58,7 @@ export async function analyzeContractInteractions(
        HAVING COUNT(*) >= 1`,
     )
 
-    for (const row of result.rows) {
+    for (const row of queryResult.rows) {
       try {
         await client.query(
           `INSERT INTO oracle_contract_interactions
@@ -90,12 +88,10 @@ export async function analyzeContractInteractions(
       await resolveContractNames(client, config.moralisApiKey)
     }
 
-    await client.query("SELECT pg_advisory_unlock(hashtext('contract_analyzer'))")
-  } finally {
-    client.release()
-  }
+    return analyzed
+  })
 
-  return analyzed
+  return result ?? 0
 }
 
 /**
@@ -144,33 +140,14 @@ async function fetchContractName(
   address: string,
   chain: string,
 ): Promise<string | null> {
-  const chainParam = chain === 'base' ? '0x2105' : chain === 'eth' ? '0x1' : chain
-  const url = `https://deep-index.moralis.io/api/v2.2/erc20/metadata?chain=${chainParam}&addresses[]=${address}`
-
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10_000)
-
-  try {
-    const res = await fetch(url, {
-      headers: {
-        'accept': 'application/json',
-        'x-api-key': apiKey,
-      },
-      signal: controller.signal,
-    })
-
-    if (!res.ok) return null
-
-    const data = await res.json() as Array<{ name?: string; symbol?: string }>
-    if (Array.isArray(data) && data.length > 0) {
-      return data[0].name ?? data[0].symbol ?? null
-    }
-    return null
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timer)
+  const chainParam = getMoralisChainParam(chain)
+  const data = await fetchMoralis(`/erc20/metadata?chain=${chainParam}&addresses[]=${address}`, apiKey)
+  if (!data) return null
+  if (Array.isArray(data) && data.length > 0) {
+    return (data[0] as { name?: string; symbol?: string }).name ??
+           (data[0] as { name?: string; symbol?: string }).symbol ?? null
   }
+  return null
 }
 
 /**
@@ -210,20 +187,12 @@ export function startContractAnalyzer(
   config: Partial<ContractAnalyzerConfig> = {},
 ): { stop: () => void } {
   const fullConfig = { ...DEFAULT_CONFIG, ...config }
-  let running = true
-
-  const loop = async () => {
-    while (running) {
-      try {
-        const n = await analyzeContractInteractions(pool, fullConfig)
-        if (n > 0) console.log(`[contract-analyzer] Analyzed ${n} contract interactions`)
-      } catch (err) {
-        console.error('[contract-analyzer] Error:', (err as Error).message)
-      }
-      await new Promise((r) => setTimeout(r, fullConfig.intervalMs))
-    }
-  }
-
-  loop()
-  return { stop: () => { running = false } }
+  return startEnricherLoop(
+    'contract-analyzer',
+    fullConfig.intervalMs,
+    async () => {
+      const n = await analyzeContractInteractions(pool, fullConfig)
+      return n > 0 ? n : null
+    },
+  )
 }

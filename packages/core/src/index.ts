@@ -53,6 +53,10 @@ export { startContractAnalyzer, analyzeContractInteractions, getAgentContractInt
 export { startDefiEnricher, enrichDefiPositions, type DefiEnricherConfig } from './adapters/defi-enricher.js'
 export { startNftEnricher, enrichNftHoldings, type NftEnricherConfig } from './adapters/nft-enricher.js'
 
+// Chain configuration + enricher utilities
+export { CHAINS, EVM_CHAINS, ALL_CHAIN_IDS, getMoralisChainParam, type ChainConfig } from './adapters/chains.js'
+export { withAdvisoryLock, processBatch, startEnricherLoop, fetchMoralis } from './adapters/enricher-utils.js'
+
 // Identity verification (Plan 4B)
 export type { WalletVerifier } from './identity/wallet-verifier.js'
 export { VerifierRegistry, verifierRegistry } from './identity/wallet-verifier.js'

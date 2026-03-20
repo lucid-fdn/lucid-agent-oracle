@@ -8,6 +8,8 @@
  * Advisory-locked to prevent concurrent execution across replicas.
  */
 import type pg from 'pg'
+import { withAdvisoryLock, fetchMoralis, startEnricherLoop } from './enricher-utils.js'
+import { getMoralisChainParam } from './chains.js'
 
 export interface DefiEnricherConfig {
   apiKey: string
@@ -60,12 +62,8 @@ export async function enrichDefiPositions(
 ): Promise<number> {
   if (!config.apiKey) return 0
 
-  const client = await pool.connect()
-  let enriched = 0
-
-  try {
-    const lockResult = await client.query("SELECT pg_try_advisory_lock(hashtext('defi_enricher'))")
-    if (!lockResult.rows[0].pg_try_advisory_lock) return 0
+  const result = await withAdvisoryLock(pool, 'defi_enricher', async (client) => {
+    let enriched = 0
 
     const wallets = await client.query(
       `SELECT wm.agent_entity, wm.chain, wm.address
@@ -124,44 +122,20 @@ export async function enrichDefiPositions(
       }
     }
 
-    await client.query("SELECT pg_advisory_unlock(hashtext('defi_enricher'))")
-  } finally {
-    client.release()
-  }
+    return enriched
+  })
 
-  return enriched
+  return result ?? 0
 }
 
 async function fetchMoralisDefiPositions(
   apiKey: string,
   address: string,
 ): Promise<MoralisDefiPosition[]> {
-  const url = `https://deep-index.moralis.io/api/v2.2/wallets/${address}/defi/positions?chain=base`
-
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10_000)
-
-  try {
-    const res = await fetch(url, {
-      headers: {
-        'accept': 'application/json',
-        'x-api-key': apiKey,
-      },
-      signal: controller.signal,
-    })
-
-    if (!res.ok) {
-      if (res.status === 429) console.warn('[defi-enricher] Rate limited')
-      return []
-    }
-
-    const data = await res.json() as { result?: MoralisDefiPosition[] }
-    return data.result ?? []
-  } catch {
-    return []
-  } finally {
-    clearTimeout(timer)
-  }
+  const chainParam = getMoralisChainParam('base')
+  const data = await fetchMoralis(`/wallets/${address}/defi/positions?chain=${chainParam}`, apiKey)
+  if (!data) return []
+  return (data as { result?: MoralisDefiPosition[] }).result ?? []
 }
 
 /**
@@ -172,20 +146,12 @@ export function startDefiEnricher(
   config: Partial<DefiEnricherConfig> & { apiKey: string },
 ): { stop: () => void } {
   const fullConfig = { ...DEFAULT_CONFIG, ...config }
-  let running = true
-
-  const loop = async () => {
-    while (running) {
-      try {
-        const n = await enrichDefiPositions(pool, fullConfig)
-        if (n > 0) console.log(`[defi-enricher] Enriched ${n} DeFi positions`)
-      } catch (err) {
-        console.error('[defi-enricher] Error:', (err as Error).message)
-      }
-      await new Promise((r) => setTimeout(r, fullConfig.intervalMs))
-    }
-  }
-
-  loop()
-  return { stop: () => { running = false } }
+  return startEnricherLoop(
+    'defi-enricher',
+    fullConfig.intervalMs,
+    async () => {
+      const n = await enrichDefiPositions(pool, fullConfig)
+      return n > 0 ? n : null
+    },
+  )
 }
