@@ -7,7 +7,12 @@ All three phases implemented, audited, and production-ready.
 - Phase B: Premium enrichment (ENS, Olas, gas, contracts, comparison, network)
 - Phase C: Viral visualization (force graph, particles, animated counters, OG cards)
 - Post-audit: 13 code org fixes, shared enricher infra, chain abstraction
-- Tests: 421 passing | TypeScript: 0 errors | Endpoints: 7/7 200 OK
+- Multi-chain: 6 chains (Base, Ethereum, Solana, BSC, Polygon, Monad) via The Graph subgraphs
+- Solana 8004: full indexer with pluggable provider architecture
+- Graph integration: centralized client, shared queries, env-var API key management
+- Chain UI: chain filter pills, chain logos/icons, chain badges, chain-agnostic labels
+- Tests: 467 passing | TypeScript: 0 errors | Endpoints: 7/7 200 OK
+- Data: 110K+ agents ingesting across 6 chains, 24K+ transactions, 5.6K+ balances
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

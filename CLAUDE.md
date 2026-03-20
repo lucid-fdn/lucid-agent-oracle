@@ -67,7 +67,7 @@ migrations/          — ClickHouse + Supabase SQL migrations
 
 ```bash
 npm run dev          # Start API server (tsx apps/api/src/server.ts)
-npm test             # Run all tests (vitest run, 421 tests) — needs CURSOR_SECRET env
+npm test             # Run all tests (vitest run, 467 tests) — needs CURSOR_SECRET env
 npm run typecheck    # TypeScript check (tsc --noEmit)
 ```
 
@@ -109,7 +109,7 @@ npx tsc  # Compile (speakeasy compile may fail on Windows — oxlint issue)
 - **On-chain:** Solana (Ed25519), Base (Foundry/Solidity)
 - **Attestation:** Ed25519 single-signer + multi-signer (N-of-M quorum with SignerSetRegistry)
 - **Observability:** OpenTelemetry (auto-instrumented Fastify/pg/redis) + 15 custom metrics
-- **Testing:** Vitest (421 tests, 65 files)
+- **Testing:** Vitest (467 tests, 79 files)
 - **CI/CD:** GitHub Actions (typecheck + test + docker build on push/PR)
 
 ## Architecture
@@ -216,6 +216,12 @@ API key via `x-api-key` header → `gateway_tenants` table → Redis cache (5min
 | Dashboard Phase A | Done | Economy overview, leaderboard tabs, enriched agent profile, activity pulse |
 | Dashboard Phase B | Done | Network page, comparison mode, ENS/gas/contract UI, share button |
 | Dashboard Phase C | Done | Force graph, particle hero, animated counters, reputation gauge, OG cards |
+| Subgraph Ingester | Done | Bulk ingestion from The Graph subgraphs — 5 EVM chains (110K+ agents) |
+| Graph Client | Done | Shared Graph Protocol client (queryGraph, buildSubgraphUrl, graph-queries) |
+| Solana 8004 Indexer | Done | Solana agent registry indexer via Helius (Anchor event Borsh decoding) |
+| Multi-provider Identity | Done | Pluggable SolanaIdentityProvider interface for future Solana registries |
+| Chain Abstraction | Done | Chain-agnostic codebase (chains.ts, ChainBadge, chain filter, multi-chain UI) |
+| Code Org Refactor | Done | Shared enricher-utils, format.ts, proxy.ts, StatusIndicator, reputation helpers |
 
 ## Key Files
 
@@ -244,6 +250,11 @@ API key via `x-api-key` header → `gateway_tenants` table → Redis cache (5min
 | `packages/core/src/adapters/economy-metrics.ts` | Hourly economy snapshot computation |
 | `packages/core/src/adapters/base-tx-harvester.ts` | Base ERC-20 transfer indexing |
 | `packages/core/src/adapters/solana-tx-harvester.ts` | Solana transaction indexing via Helius |
+| `packages/core/src/adapters/subgraph-ingester.ts` | Bulk agent ingestion from The Graph subgraphs (5 EVM chains) |
+| `packages/core/src/adapters/solana-identity/` | Solana identity provider system (pluggable, multi-provider) |
+| `packages/core/src/adapters/sol8004-adapter.ts` | Solana 8004 adapter (reuses EVM identity handler) |
+| `packages/core/src/clients/graph.ts` | Shared Graph Protocol client (queryGraph, URL resolution) |
+| `packages/core/src/clients/graph-queries.ts` | Pre-built GraphQL queries for 8004 subgraphs |
 | `apps/api/src/routes/economy.ts` | Economy metrics API endpoints |
 | `.github/workflows/ci.yml` | CI: typecheck + test + docker build |
 | `docker-compose.yml` | Local dev stack (all infra + services + Grafana) |
@@ -295,7 +306,8 @@ API key via `x-api-key` header → `gateway_tenants` table → Redis cache (5min
 | `COMPUTATION_WINDOW_MS` | `3600000` | Feed computation window (1h) |
 | `MORALIS_API_KEY` | — | Moralis API for balances, NFTs, DeFi, ENS, swap classification |
 | `BASE_RPC_URL` | — | QuickNode RPC for Base TX harvesting + ENS resolution |
-| `HELIUS_API_KEY` | — | Helius API for Solana TX harvesting |
+| `HELIUS_API_KEY` | — | Helius API for Solana TX harvesting + identity indexing |
+| `GRAPH_API_KEY` | — | The Graph gateway API key (overrides embedded fallback keys) |
 
 ## Remotes & Repos
 
