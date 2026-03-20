@@ -29,7 +29,7 @@ export interface TxHarvesterConfig {
 
 const DEFAULT_CONFIG: TxHarvesterConfig = {
   intervalMs: 30_000,
-  blockBatchSize: 2000,
+  blockBatchSize: 9999,
   rpcUrl: '',
   maxConcurrentRpc: 5,
   addressBatchSize: 50,
@@ -72,9 +72,9 @@ export async function harvestBaseTransactions(
     const currentBlock = await getCurrentBlock(config.rpcUrl)
     if (fromBlock === 0 || fromBlock > currentBlock) fromBlock = Math.max(currentBlock - 1000, 0)
 
-    // Dynamic block batch — scale with wallet count but keep a reasonable minimum
-    // With topic-filtered eth_getLogs, 2000 blocks is safe even with 1000+ wallets
-    const effectiveBatch = Math.max(1000, Math.floor(config.blockBatchSize / Math.max(1, Math.ceil(addresses.length / 200))))
+    // QuickNode caps eth_getLogs at 10,000 blocks per call.
+    // Use max range regardless of wallet count — topic filtering keeps response size small.
+    const effectiveBatch = Math.min(9999, config.blockBatchSize)
     const toBlock = Math.min(fromBlock + effectiveBatch, currentBlock)
     if (fromBlock >= toBlock) {
       await client.query("SELECT pg_advisory_unlock(hashtext('base_tx_harvester'))")
