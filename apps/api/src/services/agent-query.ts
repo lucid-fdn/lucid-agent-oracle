@@ -391,6 +391,15 @@ export class AgentQueryService {
       }
     }
 
+    // Chain filter (without wallet) — filter agents that have wallets on this chain
+    if (params.chain && !params.wallet) {
+      joins.push(
+        'JOIN oracle_wallet_mappings wmc ON wmc.agent_entity = ae.id AND wmc.removed_at IS NULL',
+      )
+      conditions.push(`wmc.chain = ${nextParam()}`)
+      values.push(params.chain)
+    }
+
     if (params.protocol) {
       joins.push(
         'JOIN oracle_identity_links il ON il.agent_entity = ae.id',
