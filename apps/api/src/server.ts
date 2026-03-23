@@ -28,6 +28,7 @@ import {
   startDefiEnricher,
   startNftEnricher,
   startSubgraphIngester,
+  startX402Harvester,
   dispatchIdentityEvent,
   getIdentityTopics,
   adapterRegistry,
@@ -43,6 +44,7 @@ import { registerProtocolRoutes } from './routes/protocols.js'
 import { registerEconomyRoutes } from './routes/economy.js'
 import { registerFeedRoutes } from './routes/feeds.js'
 import { registerReportRoutes } from './routes/reports.js'
+import { registerX402Routes } from './routes/x402.js'
 import { LucidResolver } from './services/lucid-resolver.js'
 import { initRedis, closeRedis, loadLeaderboardVersion } from './services/redis.js'
 import { EventBus } from './services/event-bus.js'
@@ -392,6 +394,11 @@ if (databaseUrl) {
     `[ingestion:subgraph] ERC-8004 subgraph ingester started (5min poll) — GRAPH_API_KEY: ${process.env.GRAPH_API_KEY ? 'set (custom key)' : 'not set (using embedded fallback keys)'}`,
   )
 
+  // x402 Payment Harvester — discovers x402 endpoints and correlates agent-to-agent payments
+  // Runs every 30 minutes, 10 agents per cycle, 2s between probes
+  startX402Harvester(sharedPool, { intervalMs: 30 * 60_000, agentsPerCycle: 10, probeTimeoutMs: 2_000, delayBetweenProbesMs: 2_000 })
+  app.log.info('[enrichment:x402] Payment harvester started (30min cycle, 10 agents/cycle)')
+
   // Plan 3A v2: Fail-fast on missing CURSOR_SECRET
   assertCursorSecret()
 
@@ -407,7 +414,8 @@ if (databaseUrl) {
   registerFeedRoutes(app, clickhouse)
   registerReportRoutes(app, clickhouse)
   registerEconomyRoutes(app, client)
-  app.log.info('Agent, protocol, feed, report, and economy routes mounted')
+  registerX402Routes(app, client)
+  app.log.info('Agent, protocol, feed, report, economy, and x402 routes mounted')
 
   // Plan 3E: SSE streaming + webhook alert routes
   registerStreamRoutes(app, eventBus)

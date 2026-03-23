@@ -66,8 +66,12 @@ export { withAdvisoryLock, processBatch, startEnricherLoop, fetchMoralis } from 
 export { reportEnricherRun, reportEnricherError, getEnricherHealth, checkStaleEnrichers, type EnricherStatus } from './adapters/enricher-monitor.js'
 export { trackApiCall, getApiUsage, type ApiName } from './adapters/rate-tracker.js'
 
-// x402 Payment Harvester (placeholder)
-export { startX402Harvester, type X402PaymentEvent } from './adapters/x402-harvester.js'
+// x402 Payment Harvester
+export {
+  startX402Harvester, harvestX402,
+  probeEndpoint, parseX402Header, extractServiceUrls, isProbeUrlSafe,
+  type X402PaymentEvent, type X402Endpoint, type X402HarvesterConfig, type X402PaymentHeader,
+} from './adapters/x402-harvester.js'
 
 // Identity verification (Plan 4B)
 export type { WalletVerifier } from './identity/wallet-verifier.js'
