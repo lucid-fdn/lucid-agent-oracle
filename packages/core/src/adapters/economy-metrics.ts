@@ -152,6 +152,8 @@ export async function computeEconomySnapshot(pool: pg.Pool): Promise<EconomySnap
 
 /**
  * Start the economy metrics computer on a timer.
+ * Computes the first snapshot immediately on startup (so the dashboard never
+ * shows $0 after a deploy), then switches to hourly polling.
  */
 export function startEconomyMetrics(
   pool: pg.Pool,
@@ -164,9 +166,7 @@ export function startEconomyMetrics(
     async () => {
       const snapshot = await computeEconomySnapshot(pool)
       if (snapshot) {
-        // Override the default log in startEnricherLoop by returning null
-        // and logging our own specific message
-        console.log(`[economy-metrics] Snapshot: agents=${snapshot.total_agents} tvl=$${snapshot.total_tvl_usd} txs_24h=${snapshot.tx_count_24h}`)
+        console.log(`[economy-metrics] Snapshot computed on startup: agents=${snapshot.total_agents} tvl=$${snapshot.total_tvl_usd} txs_24h=${snapshot.tx_count_24h}`)
       }
       return null // suppress generic "Processed N items" log
     },

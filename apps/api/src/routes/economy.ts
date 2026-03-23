@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { DbClient } from '@lucid/oracle-core'
+import { getEnricherHealth, getApiUsage } from '@lucid/oracle-core'
 import { Type } from '@sinclair/typebox'
 import { sendProblem } from '../schemas/common.js'
 
@@ -146,5 +147,44 @@ export function registerEconomyRoutes(
     }))
 
     return reply.send({ data })
+  })
+
+  // ---- GET /v1/oracle/health/enrichers ----
+  app.get('/v1/oracle/health/enrichers', {
+    schema: {
+      tags: ['agents'],
+      summary: 'Enricher health status',
+      description: 'Returns health status for all enricher loops and external API usage.',
+      response: {
+        200: Type.Object({
+          enrichers: Type.Array(Type.Object({
+            name: Type.String(),
+            lastRunAt: Type.Union([Type.String(), Type.Null()]),
+            lastSuccessAt: Type.Union([Type.String(), Type.Null()]),
+            lastError: Type.Union([Type.String(), Type.Null()]),
+            itemsProcessed: Type.Integer(),
+            consecutiveErrors: Type.Integer(),
+          })),
+          api_usage: Type.Record(Type.String(), Type.Object({
+            calls_today: Type.Integer(),
+            limit: Type.Integer(),
+          })),
+        }),
+      },
+    },
+    config: {
+      rateLimit: { max: 60 },
+    },
+  }, async (_request, reply) => {
+    const enrichers = getEnricherHealth().map((s) => ({
+      name: s.name,
+      lastRunAt: s.lastRunAt?.toISOString() ?? null,
+      lastSuccessAt: s.lastSuccessAt?.toISOString() ?? null,
+      lastError: s.lastError,
+      itemsProcessed: s.itemsProcessed,
+      consecutiveErrors: s.consecutiveErrors,
+    }))
+    const api_usage = getApiUsage()
+    return reply.send({ enrichers, api_usage })
   })
 }

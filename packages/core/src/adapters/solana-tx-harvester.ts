@@ -9,6 +9,7 @@
  */
 import type pg from 'pg'
 import { TokenRegistry } from './token-registry.js'
+import { trackApiCall } from './rate-tracker.js'
 
 export interface SolanaTxHarvesterConfig {
   intervalMs: number
@@ -211,6 +212,7 @@ async function fetchHeliusTransactions(
   address: string,
   beforeSignature?: string,
 ): Promise<HeliusTransaction[]> {
+  trackApiCall('helius')
   let url = `https://api.helius.xyz/v0/addresses/${address}/transactions?api-key=${apiKey}&limit=50`
   if (beforeSignature) url += `&before=${beforeSignature}`
 

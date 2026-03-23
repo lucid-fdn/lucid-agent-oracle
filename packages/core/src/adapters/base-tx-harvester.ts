@@ -12,6 +12,7 @@
  */
 import type pg from 'pg'
 import { TokenRegistry } from './token-registry.js'
+import { trackApiCall } from './rate-tracker.js'
 
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
 const CHECKPOINT_KEY = 'base_tx_harvester'
@@ -310,6 +311,7 @@ async function deriveSwapPriceObservation(client: pg.PoolClient, txHash: string,
 }
 
 async function getCurrentBlock(rpcUrl: string): Promise<number> {
+  trackApiCall('quicknode')
   const res = await fetch(rpcUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -332,6 +334,7 @@ async function queryLogs(
   rpcUrl: string,
   params: { topics: (string | string[] | null)[]; fromBlock: string; toBlock: string },
 ): Promise<LogEntry[]> {
+  trackApiCall('quicknode')
   const res = await fetch(rpcUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

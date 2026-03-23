@@ -6,22 +6,6 @@
  */
 
 /**
- * Query agents ordered by ID, using skip-based pagination.
- * Used for initial bulk sync.
- */
-export function agentsQuery(first: number, skip: number): string {
-  return JSON.stringify({
-    query: `{
-  agents(first: ${first}, skip: ${skip}, orderBy: agentId, orderDirection: asc) {
-    agentId
-    owner
-    agentURI
-  }
-}`,
-  })
-}
-
-/**
  * Query agents with agentId greater than a given value.
  * Used for incremental sync after initial bulk load.
  */

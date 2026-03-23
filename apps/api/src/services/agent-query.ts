@@ -960,7 +960,8 @@ export class AgentQueryService {
   // ---- getAgentGraph -------------------------------------------------------
 
   async getAgentGraph(limit = 500): Promise<AgentGraphEdge[]> {
-    const { rows } = await this.db.query(
+    // First try agent-to-agent connections (counterparty is another agent's wallet)
+    const { rows: agentRows } = await this.db.query(
       `SELECT
          wt.agent_entity AS from_agent,
          wm2.agent_entity AS to_agent,
@@ -978,7 +979,35 @@ export class AgentQueryService {
       [limit],
     )
 
-    return rows.map((r) => ({
+    const agentEdges = agentRows.map((r) => ({
+      from_agent: r.from_agent as string,
+      to_agent: r.to_agent as string,
+      tx_count: r.tx_count as number,
+      total_usd: Number(r.total_usd ?? 0),
+    }))
+
+    // If we found agent-to-agent edges, return those
+    if (agentEdges.length > 0) return agentEdges
+
+    // Fallback: show agent → top counterparty connections (even non-agent wallets).
+    // This makes the graph useful when no agent wallets have transacted with each other.
+    const { rows: counterpartyRows } = await this.db.query(
+      `SELECT
+         wt.agent_entity AS from_agent,
+         wt.counterparty AS to_agent,
+         COUNT(*)::int AS tx_count,
+         COALESCE(SUM(wt.amount_usd), 0)::numeric AS total_usd
+       FROM oracle_wallet_transactions wt
+       WHERE wt.direction = 'outbound'
+         AND wt.counterparty IS NOT NULL
+       GROUP BY wt.agent_entity, wt.counterparty
+       HAVING COUNT(*) >= 2
+       ORDER BY tx_count DESC
+       LIMIT $1::int`,
+      [limit],
+    )
+
+    return counterpartyRows.map((r) => ({
       from_agent: r.from_agent as string,
       to_agent: r.to_agent as string,
       tx_count: r.tx_count as number,

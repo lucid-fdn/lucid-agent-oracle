@@ -18,7 +18,8 @@ import { computeEventId } from '../types/events.js'
 import { startEnricherLoop } from './enricher-utils.js'
 import { CHAINS, getSubgraphUrl } from './chains.js'
 import { queryGraph } from '../clients/graph.js'
-import { agentsQuery, agentsAfterQuery } from '../clients/graph-queries.js'
+import { agentsAfterQuery } from '../clients/graph-queries.js'
+import { trackApiCall } from './rate-tracker.js'
 
 // ── Types ──
 
@@ -61,6 +62,7 @@ export async function querySubgraph(
   body: string,
   timeoutMs: number,
 ): Promise<SubgraphAgent[]> {
+  trackApiCall('graph')
   // The body is a JSON string containing { query: "..." }.
   // queryGraph expects the raw query string, so we parse it out.
   const parsed = JSON.parse(body) as { query: string; variables?: Record<string, any> }

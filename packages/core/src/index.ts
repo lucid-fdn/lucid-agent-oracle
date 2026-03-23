@@ -62,6 +62,13 @@ export {
 export { CHAINS, EVM_CHAINS, ALL_CHAIN_IDS, getMoralisChainParam, getSubgraphUrl, type ChainConfig } from './adapters/chains.js'
 export { withAdvisoryLock, processBatch, startEnricherLoop, fetchMoralis } from './adapters/enricher-utils.js'
 
+// Enricher health monitoring + rate tracking
+export { reportEnricherRun, reportEnricherError, getEnricherHealth, checkStaleEnrichers, type EnricherStatus } from './adapters/enricher-monitor.js'
+export { trackApiCall, getApiUsage, type ApiName } from './adapters/rate-tracker.js'
+
+// x402 Payment Harvester (placeholder)
+export { startX402Harvester, type X402PaymentEvent } from './adapters/x402-harvester.js'
+
 // Identity verification (Plan 4B)
 export type { WalletVerifier } from './identity/wallet-verifier.js'
 export { VerifierRegistry, verifierRegistry } from './identity/wallet-verifier.js'
@@ -113,7 +120,6 @@ export {
   type GraphClientConfig,
 } from './clients/graph.js'
 export {
-  agentsQuery,
   agentsAfterQuery,
   agentByIdQuery,
   feedbackQuery,

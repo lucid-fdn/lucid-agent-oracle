@@ -5,6 +5,8 @@
  * helpers that were previously duplicated across every enricher file.
  */
 import type pg from 'pg'
+import { reportEnricherRun, reportEnricherError } from './enricher-monitor.js'
+import { trackApiCall } from './rate-tracker.js'
 
 /** Standard enricher pattern: advisory lock + connect + release in finally */
 export async function withAdvisoryLock<T>(
@@ -56,8 +58,11 @@ export function startEnricherLoop(
       try {
         const n = await fn()
         if (n != null && n > 0) console.log(`[${name}] Processed ${n} items`)
+        reportEnricherRun(name, n ?? 0)
       } catch (err) {
-        console.error(`[${name}] Error:`, (err as Error).message)
+        const msg = (err as Error).message
+        console.error(`[${name}] Error:`, msg)
+        reportEnricherError(name, msg)
       }
       await new Promise(r => setTimeout(r, intervalMs))
     }
@@ -68,6 +73,7 @@ export function startEnricherLoop(
 
 /** Moralis API fetch with standard auth + timeout */
 export async function fetchMoralis(path: string, apiKey: string, timeoutMs = 10000): Promise<any> {
+  trackApiCall('moralis')
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
