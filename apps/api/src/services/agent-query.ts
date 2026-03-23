@@ -1011,8 +1011,8 @@ export class AgentQueryService {
 
     const activeCount = nodeMap.size
 
-    // Fetch all registered agents (up to 2000) to include as silent nodes
-    const silentLimit = Math.max(0, 2000 - activeCount)
+    // Fetch all registered agents (up to 30000) to include as silent nodes
+    const silentLimit = Math.max(0, 30000 - activeCount)
     if (silentLimit > 0) {
       const { rows: allAgentRows } = await this.db.query(
         `SELECT ae.id, ae.display_name,
