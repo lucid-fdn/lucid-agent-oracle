@@ -120,41 +120,25 @@ export async function syncSubgraphChain(
   let agentsProcessed = 0
   let highestId = lastAgentId
 
-  if (lastAgentId === 0) {
-    // Initial sync — use skip-based pagination to get all agents
-    let skip = 0
-    while (true) {
-      const agents = await querySubgraph(
-        subgraphUrl,
-        agentsQuery(config.batchSize, skip),
-        config.timeoutMs,
-      )
-      if (agents.length === 0) break
-
-      for (const agent of agents) {
-        const written = await writeAgentStagingEvent(client, chainName, agent)
-        if (written) agentsProcessed++
-        const numId = parseInt(agent.agentId, 10)
-        if (!isNaN(numId) && numId > highestId) highestId = numId
-      }
-
-      skip += agents.length
-      if (agents.length < config.batchSize) break // last page
-    }
-  } else {
-    // Incremental sync — fetch only new agents
+  // Always use ID-based cursor pagination — skip breaks at 5,000 on The Graph
+  let cursor = lastAgentId
+  while (true) {
     const agents = await querySubgraph(
       subgraphUrl,
-      agentsAfterQuery(config.batchSize, lastAgentId),
+      agentsAfterQuery(config.batchSize, cursor),
       config.timeoutMs,
     )
+    if (agents.length === 0) break
 
     for (const agent of agents) {
       const written = await writeAgentStagingEvent(client, chainName, agent)
       if (written) agentsProcessed++
       const numId = parseInt(agent.agentId, 10)
       if (!isNaN(numId) && numId > highestId) highestId = numId
+      if (!isNaN(numId) && numId > cursor) cursor = numId
     }
+
+    if (agents.length < config.batchSize) break
   }
 
   // Update checkpoint
@@ -218,34 +202,25 @@ async function syncSubgraphChainPooled(
   let agentsProcessed = 0
   let highestId = lastAgentId
 
-  if (lastAgentId === 0) {
-    let skip = 0
-    while (true) {
-      const agents = await querySubgraph(subgraphUrl, agentsQuery(config.batchSize, skip), config.timeoutMs)
-      if (agents.length === 0) break
+  // Always use ID-based pagination (agentId_gt) — skip-based breaks at 5,000 on The Graph
+  let cursor = lastAgentId
+  while (true) {
+    const agents = await querySubgraph(subgraphUrl, agentsAfterQuery(config.batchSize, cursor), config.timeoutMs)
+    if (agents.length === 0) break
 
-      for (const agent of agents) {
-        const written = await writeAgentStagingEvent(pool, chainName, agent)
-        if (written) agentsProcessed++
-        const numId = parseInt(agent.agentId, 10)
-        if (!isNaN(numId) && numId > highestId) highestId = numId
-      }
-
-      if (agentsProcessed > 0 && agentsProcessed % 5000 === 0) {
-        console.log(`[subgraph-ingester] ${chainName}: ${agentsProcessed} agents so far (skip=${skip})`)
-      }
-
-      skip += agents.length
-      if (agents.length < config.batchSize) break
-    }
-  } else {
-    const agents = await querySubgraph(subgraphUrl, agentsAfterQuery(config.batchSize, lastAgentId), config.timeoutMs)
     for (const agent of agents) {
       const written = await writeAgentStagingEvent(pool, chainName, agent)
       if (written) agentsProcessed++
       const numId = parseInt(agent.agentId, 10)
       if (!isNaN(numId) && numId > highestId) highestId = numId
+      if (!isNaN(numId) && numId > cursor) cursor = numId
     }
+
+    if (agentsProcessed > 0 && agentsProcessed % 5000 === 0) {
+      console.log(`[subgraph-ingester] ${chainName}: ${agentsProcessed} agents so far (cursor=${cursor})`)
+    }
+
+    if (agents.length < config.batchSize) break
   }
 
   return { agentsProcessed, lastAgentId: highestId }
