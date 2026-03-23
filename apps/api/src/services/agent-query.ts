@@ -158,6 +158,12 @@ export interface AgentGraphEdge {
   to_agent: string
   tx_count: number
   total_usd: number
+  from_name: string | null
+  to_name: string | null
+  from_chain: string | null
+  to_chain: string | null
+  from_reputation: number | null
+  to_reputation: number | null
 }
 
 export interface ProtocolMetrics {
@@ -966,14 +972,24 @@ export class AgentQueryService {
          wt.agent_entity AS from_agent,
          wm2.agent_entity AS to_agent,
          COUNT(*)::int AS tx_count,
-         COALESCE(SUM(wt.amount_usd), 0)::numeric AS total_usd
+         COALESCE(SUM(wt.amount_usd), 0)::numeric AS total_usd,
+         ae1.display_name AS from_name,
+         ae2.display_name AS to_name,
+         (SELECT wmc1.chain FROM oracle_wallet_mappings wmc1 WHERE wmc1.agent_entity = wt.agent_entity AND wmc1.removed_at IS NULL LIMIT 1) AS from_chain,
+         (SELECT wmc2.chain FROM oracle_wallet_mappings wmc2 WHERE wmc2.agent_entity = wm2.agent_entity AND wmc2.removed_at IS NULL LIMIT 1) AS to_chain,
+         CASE WHEN ae1.reputation_json IS NOT NULL AND (ae1.reputation_json->>'avg_value')::numeric <= 100
+              THEN (ae1.reputation_json->>'avg_value')::numeric ELSE NULL END AS from_reputation,
+         CASE WHEN ae2.reputation_json IS NOT NULL AND (ae2.reputation_json->>'avg_value')::numeric <= 100
+              THEN (ae2.reputation_json->>'avg_value')::numeric ELSE NULL END AS to_reputation
        FROM oracle_wallet_transactions wt
        JOIN oracle_wallet_mappings wm2
          ON LOWER(wt.counterparty) = LOWER(wm2.address)
          AND wm2.chain = wt.chain
          AND wm2.removed_at IS NULL
+       LEFT JOIN oracle_agent_entities ae1 ON ae1.id = wt.agent_entity
+       LEFT JOIN oracle_agent_entities ae2 ON ae2.id = wm2.agent_entity
        WHERE wt.direction = 'outbound'
-       GROUP BY wt.agent_entity, wm2.agent_entity
+       GROUP BY wt.agent_entity, wm2.agent_entity, ae1.display_name, ae2.display_name, ae1.reputation_json, ae2.reputation_json
        ORDER BY tx_count DESC
        LIMIT $1::int`,
       [limit],
@@ -984,6 +1000,12 @@ export class AgentQueryService {
       to_agent: r.to_agent as string,
       tx_count: r.tx_count as number,
       total_usd: Number(r.total_usd ?? 0),
+      from_name: r.from_name as string | null,
+      to_name: r.to_name as string | null,
+      from_chain: r.from_chain as string | null,
+      to_chain: r.to_chain as string | null,
+      from_reputation: r.from_reputation ? Number(r.from_reputation) : null,
+      to_reputation: r.to_reputation ? Number(r.to_reputation) : null,
     }))
 
     // If we found agent-to-agent edges, return those
@@ -996,11 +1018,19 @@ export class AgentQueryService {
          wt.agent_entity AS from_agent,
          wt.counterparty AS to_agent,
          COUNT(*)::int AS tx_count,
-         COALESCE(SUM(wt.amount_usd), 0)::numeric AS total_usd
+         COALESCE(SUM(wt.amount_usd), 0)::numeric AS total_usd,
+         ae1.display_name AS from_name,
+         NULL AS to_name,
+         (SELECT wmc.chain FROM oracle_wallet_mappings wmc WHERE wmc.agent_entity = wt.agent_entity AND wmc.removed_at IS NULL LIMIT 1) AS from_chain,
+         wt.chain AS to_chain,
+         CASE WHEN ae1.reputation_json IS NOT NULL AND (ae1.reputation_json->>'avg_value')::numeric <= 100
+              THEN (ae1.reputation_json->>'avg_value')::numeric ELSE NULL END AS from_reputation,
+         NULL::numeric AS to_reputation
        FROM oracle_wallet_transactions wt
+       LEFT JOIN oracle_agent_entities ae1 ON ae1.id = wt.agent_entity
        WHERE wt.direction = 'outbound'
          AND wt.counterparty IS NOT NULL
-       GROUP BY wt.agent_entity, wt.counterparty
+       GROUP BY wt.agent_entity, wt.counterparty, wt.chain, ae1.display_name, ae1.reputation_json
        HAVING COUNT(*) >= 2
        ORDER BY tx_count DESC
        LIMIT $1::int`,
@@ -1012,6 +1042,12 @@ export class AgentQueryService {
       to_agent: r.to_agent as string,
       tx_count: r.tx_count as number,
       total_usd: Number(r.total_usd ?? 0),
+      from_name: r.from_name as string | null,
+      to_name: r.to_name as string | null,
+      from_chain: r.from_chain as string | null,
+      to_chain: r.to_chain as string | null,
+      from_reputation: r.from_reputation ? Number(r.from_reputation) : null,
+      to_reputation: r.to_reputation ? Number(r.to_reputation) : null,
     }))
   }
 }
