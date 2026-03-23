@@ -56,6 +56,7 @@ export const keys = {
     `oracle:feed:history:${feedId}:${period}:${interval}:${plan}`,
   modelUsage: (period: string, limit: number, plan: string) =>
     `oracle:model-usage:${period}:${limit}:${plan}`,
+  graphSnapshot: () => 'oracle:graph:snapshot',
   sseChannel: (channel: string) => `oracle:events:${channel}`,
   webhookStream: () => 'oracle:webhooks',
   webhookRetries: () => 'oracle:webhook_retries',

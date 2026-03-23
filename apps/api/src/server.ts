@@ -29,6 +29,7 @@ import {
   startNftEnricher,
   startSubgraphIngester,
   startX402Harvester,
+  startGraphMaterializer,
   dispatchIdentityEvent,
   getIdentityTopics,
   adapterRegistry,
@@ -398,6 +399,28 @@ if (databaseUrl) {
   // Runs every 30 minutes, 10 agents per cycle, 2s between probes
   startX402Harvester(sharedPool, { intervalMs: 30 * 60_000, agentsPerCycle: 10, probeTimeoutMs: 2_000, delayBetweenProbesMs: 2_000 })
   app.log.info('[enrichment:x402] Payment harvester started (30min cycle, 10 agents/cycle)')
+
+  // Graph Materializer — pre-computes agent network graph every 5 minutes
+  // Stores snapshot in Redis + DB, emits SSE event on update
+  startGraphMaterializer(
+    {
+      pool: sharedPool,
+      redis,
+      onSnapshot: (snapshot) => {
+        void eventBus.emit({
+          channel: 'agent_events',
+          payload: {
+            type: 'graph_updated',
+            meta: snapshot.meta,
+          },
+          sse: true,
+          webhook: false,
+        })
+      },
+    },
+    { intervalMs: 5 * 60_000 },
+  )
+  app.log.info('[enrichment] Graph materializer started (5min cycle)')
 
   // Plan 3A v2: Fail-fast on missing CURSOR_SECRET
   assertCursorSecret()

@@ -73,6 +73,21 @@ export {
   type X402PaymentEvent, type X402Endpoint, type X402HarvesterConfig, type X402PaymentHeader,
 } from './adapters/x402-harvester.js'
 
+// Graph Materializer (pre-computed network graph)
+export {
+  computeGraphSnapshot,
+  storeSnapshotInRedis,
+  readSnapshotFromRedis,
+  startGraphMaterializer,
+  GRAPH_SNAPSHOT_REDIS_KEY,
+  type GraphSnapshot,
+  type GraphSnapshotNode,
+  type GraphSnapshotLink,
+  type GraphSnapshotMeta,
+  type GraphMaterializerConfig,
+  type GraphMaterializerDeps,
+} from './adapters/graph-materializer.js'
+
 // Identity verification (Plan 4B)
 export type { WalletVerifier } from './identity/wallet-verifier.js'
 export { VerifierRegistry, verifierRegistry } from './identity/wallet-verifier.js'

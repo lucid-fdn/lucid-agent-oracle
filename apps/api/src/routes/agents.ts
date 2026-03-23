@@ -421,31 +421,51 @@ export function registerAgentRoutes(
   app.get('/v1/oracle/agents/graph', {
     schema: {
       tags: ['agents'],
-      summary: 'Agent-to-agent transaction graph',
-      description: 'Discover agent-to-agent transactions by cross-referencing wallet transactions with wallet mappings.',
+      summary: 'Pre-computed agent network graph snapshot',
+      description: 'Returns the pre-computed agent network graph with nodes, links, and chain metadata. Served from Redis cache (5-min refresh). Falls back to live SQL on cache miss.',
       querystring: Type.Object({
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000, default: 500 })),
       }),
       response: {
         200: Type.Object({
-          data: Type.Array(Type.Object({
-            from_agent: Type.String(),
-            to_agent: Type.String(),
-            tx_count: Type.Integer(),
-            total_usd: Type.Number(),
-          })),
+          data: Type.Object({
+            nodes: Type.Array(Type.Object({
+              id: Type.String(),
+              name: Type.Union([Type.String(), Type.Null()]),
+              chain: Type.String(),
+              reputation: Type.Union([Type.Number(), Type.Null()]),
+              txCount: Type.Integer(),
+              portfolioUsd: Type.Number(),
+            })),
+            links: Type.Array(Type.Object({
+              source: Type.String(),
+              target: Type.String(),
+              value: Type.Integer(),
+              usd: Type.Number(),
+            })),
+            meta: Type.Object({
+              totalAgents: Type.Integer(),
+              totalConnections: Type.Integer(),
+              chainCounts: Type.Record(Type.String(), Type.Integer()),
+              computedAt: Type.String(),
+            }),
+          }),
         }),
       },
     },
     config: {
+      cache: {
+        ttl: 300,
+        key: () => 'graph',
+      },
       rateLimit: { max: 30 },
     },
   }, async (request, reply) => {
     const query = request.query as { limit?: number }
     const limit = query.limit ?? 500
 
-    const edges = await service.getAgentGraph(limit)
-    return reply.send({ data: edges })
+    const snapshot = await service.getGraphSnapshot(limit)
+    return reply.send({ data: snapshot })
   })
 
   // ---- GET /v1/oracle/agents/stats (Free) ----

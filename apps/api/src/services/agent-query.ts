@@ -1,4 +1,6 @@
-import type { DbClient } from '@lucid/oracle-core'
+import type { DbClient, GraphSnapshot } from '@lucid/oracle-core'
+import { readSnapshotFromRedis } from '@lucid/oracle-core'
+import { getRedis } from './redis.js'
 
 // ---------------------------------------------------------------------------
 // Protocol Registry
@@ -963,7 +965,74 @@ export class AgentQueryService {
     }
   }
 
-  // ---- getAgentGraph -------------------------------------------------------
+  // ---- getGraphSnapshot (pre-computed, cache-first) --------------------------
+
+  /**
+   * Returns the pre-computed graph snapshot from Redis cache.
+   * Falls back to live SQL query (via getAgentGraph) if cache is empty.
+   */
+  async getGraphSnapshot(limit = 500): Promise<GraphSnapshot> {
+    // Try Redis cache first
+    const redis = getRedis()
+    const cached = await readSnapshotFromRedis(redis)
+    if (cached) return cached
+
+    // Cache miss — fall back to live SQL query
+    const edges = await this.getAgentGraph(limit)
+
+    // Build snapshot format from edges
+    const nodeMap = new Map<string, { id: string; name: string | null; chain: string; reputation: number | null; txCount: number; portfolioUsd: number }>()
+    for (const e of edges) {
+      if (!nodeMap.has(e.from_agent)) {
+        nodeMap.set(e.from_agent, {
+          id: e.from_agent,
+          name: e.from_name,
+          chain: e.from_chain ?? 'base',
+          reputation: e.from_reputation,
+          txCount: 0,
+          portfolioUsd: 0,
+        })
+      }
+      if (!nodeMap.has(e.to_agent)) {
+        nodeMap.set(e.to_agent, {
+          id: e.to_agent,
+          name: e.to_name,
+          chain: e.to_chain ?? 'base',
+          reputation: e.to_reputation,
+          txCount: 0,
+          portfolioUsd: 0,
+        })
+      }
+      nodeMap.get(e.from_agent)!.txCount += e.tx_count
+      nodeMap.get(e.to_agent)!.txCount += e.tx_count
+    }
+
+    const nodes = Array.from(nodeMap.values())
+    const links = edges.map((e) => ({
+      source: e.from_agent,
+      target: e.to_agent,
+      value: e.tx_count,
+      usd: e.total_usd,
+    }))
+
+    const chainCounts: Record<string, number> = {}
+    for (const n of nodes) {
+      chainCounts[n.chain] = (chainCounts[n.chain] ?? 0) + 1
+    }
+
+    return {
+      nodes,
+      links,
+      meta: {
+        totalAgents: nodes.length,
+        totalConnections: links.length,
+        chainCounts,
+        computedAt: new Date().toISOString(),
+      },
+    }
+  }
+
+  // ---- getAgentGraph (live SQL — used as fallback) ---------------------------
 
   async getAgentGraph(limit = 500): Promise<AgentGraphEdge[]> {
     // First try agent-to-agent connections (counterparty is another agent's wallet)
