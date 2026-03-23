@@ -20,6 +20,7 @@ export interface GraphSnapshotNode {
   reputation: number | null
   txCount: number
   portfolioUsd: number
+  active: boolean
 }
 
 export interface GraphSnapshotLink {
@@ -31,6 +32,7 @@ export interface GraphSnapshotLink {
 
 export interface GraphSnapshotMeta {
   totalAgents: number
+  activeAgents: number
   totalConnections: number
   chainCounts: Record<string, number>
   computedAt: string
@@ -162,6 +164,7 @@ export async function computeGraphSnapshot(
           reputation: e.from_reputation != null ? Number(e.from_reputation) : null,
           txCount: 0,
           portfolioUsd: Number(e.from_portfolio_usd ?? 0),
+          active: true,
         })
       }
 
@@ -173,6 +176,7 @@ export async function computeGraphSnapshot(
           reputation: e.to_reputation != null ? Number(e.to_reputation) : null,
           txCount: 0,
           portfolioUsd: Number(e.to_portfolio_usd ?? 0),
+          active: true,
         })
       }
 
@@ -181,13 +185,47 @@ export async function computeGraphSnapshot(
       nodeMap.get(toId)!.txCount += txCount
     }
 
-    const nodes = Array.from(nodeMap.values())
+    const activeCount = nodeMap.size
+
     const links: GraphSnapshotLink[] = edges.map((e) => ({
       source: e.from_agent as string,
       target: e.to_agent as string,
       value: e.tx_count as number,
       usd: Number(e.total_usd ?? 0),
     }))
+
+    // Fetch all registered agents (up to 2000) to include as silent nodes
+    const silentLimit = Math.max(0, 2000 - activeCount)
+    if (silentLimit > 0) {
+      const { rows: allAgentRows } = await client.query(
+        `SELECT ae.id, ae.display_name,
+           (SELECT wm.chain FROM oracle_wallet_mappings wm
+            WHERE wm.agent_entity = ae.id AND wm.removed_at IS NULL LIMIT 1) AS primary_chain,
+           CASE WHEN ae.reputation_json IS NOT NULL
+                AND (ae.reputation_json->>'avg_value')::numeric <= 100
+                THEN (ae.reputation_json->>'avg_value')::numeric ELSE NULL END AS reputation
+         FROM oracle_agent_entities ae
+         ORDER BY ae.created_at DESC
+         LIMIT $1::int`,
+        [silentLimit + activeCount], // fetch extra to account for overlap with active nodes
+      )
+
+      for (const row of allAgentRows) {
+        const id = row.id as string
+        if (nodeMap.has(id)) continue // already an active node
+        nodeMap.set(id, {
+          id,
+          name: (row.display_name as string) ?? null,
+          chain: (row.primary_chain as string) ?? 'base',
+          reputation: row.reputation != null ? Number(row.reputation) : null,
+          txCount: 0,
+          portfolioUsd: 0,
+          active: false,
+        })
+      }
+    }
+
+    const nodes = Array.from(nodeMap.values())
 
     // Chain distribution
     const chainCounts: Record<string, number> = {}
@@ -200,6 +238,7 @@ export async function computeGraphSnapshot(
       links,
       meta: {
         totalAgents: nodes.length,
+        activeAgents: activeCount,
         totalConnections: links.length,
         chainCounts,
         computedAt: new Date().toISOString(),
@@ -305,7 +344,7 @@ export function startGraphMaterializer(
       if (onSnapshot) onSnapshot(snapshot)
 
       console.log(
-        `[graph-materializer] Snapshot computed: ${snapshot.meta.totalAgents} agents, ${snapshot.meta.totalConnections} connections`,
+        `[graph-materializer] Snapshot computed: ${snapshot.meta.activeAgents} active / ${snapshot.meta.totalAgents} total agents, ${snapshot.meta.totalConnections} connections`,
       )
 
       return null // suppress generic "Processed N items" log

@@ -981,7 +981,7 @@ export class AgentQueryService {
     const edges = await this.getAgentGraph(limit)
 
     // Build snapshot format from edges
-    const nodeMap = new Map<string, { id: string; name: string | null; chain: string; reputation: number | null; txCount: number; portfolioUsd: number }>()
+    const nodeMap = new Map<string, { id: string; name: string | null; chain: string; reputation: number | null; txCount: number; portfolioUsd: number; active: boolean }>()
     for (const e of edges) {
       if (!nodeMap.has(e.from_agent)) {
         nodeMap.set(e.from_agent, {
@@ -991,6 +991,7 @@ export class AgentQueryService {
           reputation: e.from_reputation,
           txCount: 0,
           portfolioUsd: 0,
+          active: true,
         })
       }
       if (!nodeMap.has(e.to_agent)) {
@@ -1001,10 +1002,44 @@ export class AgentQueryService {
           reputation: e.to_reputation,
           txCount: 0,
           portfolioUsd: 0,
+          active: true,
         })
       }
       nodeMap.get(e.from_agent)!.txCount += e.tx_count
       nodeMap.get(e.to_agent)!.txCount += e.tx_count
+    }
+
+    const activeCount = nodeMap.size
+
+    // Fetch all registered agents (up to 2000) to include as silent nodes
+    const silentLimit = Math.max(0, 2000 - activeCount)
+    if (silentLimit > 0) {
+      const { rows: allAgentRows } = await this.db.query(
+        `SELECT ae.id, ae.display_name,
+           (SELECT wm.chain FROM oracle_wallet_mappings wm
+            WHERE wm.agent_entity = ae.id AND wm.removed_at IS NULL LIMIT 1) AS primary_chain,
+           CASE WHEN ae.reputation_json IS NOT NULL
+                AND (ae.reputation_json->>'avg_value')::numeric <= 100
+                THEN (ae.reputation_json->>'avg_value')::numeric ELSE NULL END AS reputation
+         FROM oracle_agent_entities ae
+         ORDER BY ae.created_at DESC
+         LIMIT $1::int`,
+        [silentLimit + activeCount],
+      )
+
+      for (const row of allAgentRows) {
+        const id = row.id as string
+        if (nodeMap.has(id)) continue
+        nodeMap.set(id, {
+          id,
+          name: (row.display_name as string) ?? null,
+          chain: (row.primary_chain as string) ?? 'base',
+          reputation: row.reputation != null ? Number(row.reputation) : null,
+          txCount: 0,
+          portfolioUsd: 0,
+          active: false,
+        })
+      }
     }
 
     const nodes = Array.from(nodeMap.values())
@@ -1025,6 +1060,7 @@ export class AgentQueryService {
       links,
       meta: {
         totalAgents: nodes.length,
+        activeAgents: activeCount,
         totalConnections: links.length,
         chainCounts,
         computedAt: new Date().toISOString(),
